@@ -1,0 +1,39 @@
+{
+  "name": "nl2chart-agent",
+  "version": "1.0.0",
+  "description": "基于 ReAct 架构的智能数据分析 Agent，支持自然语言驱动的数据可视化",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "agent",
+    "react",
+    "llm",
+    "function-calling",
+    "data-analysis",
+    "chart",
+    "echarts",
+    "natural-language",
+    "ai"
+  ],
+  "author": "koen301",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/koen301/nl2chart-agent.git"
+  },
+  "homepage": "https://github.com/koen301/nl2chart-agent#readme",
+  "bugs": {
+    "url": "https://github.com/koen301/nl2chart-agent/issues"
+  },
+  "dependencies": {
+    "axios": "^1.16.1",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "uuid": "^9.0.0"
+  }
+}

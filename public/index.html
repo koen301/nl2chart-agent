@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>智能数据分析 Agent - 演示系统</title>
+  <script src="lib/echarts.min.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+    }
+    
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    
+    header {
+      text-align: center;
+      color: white;
+      margin-bottom: 30px;
+    }
+    
+    header h1 {
+      font-size: 2.5em;
+      margin-bottom: 10px;
+      text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+    }
+    
+    header p {
+      font-size: 1.1em;
+      opacity: 0.9;
+    }
+    
+    .main-grid {
+      display: grid;
+      grid-template-columns: 1fr 2fr;
+      gap: 20px;
+    }
+    
+    .card {
+      background: white;
+      border-radius: 15px;
+      padding: 25px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    }
+    
+    .card h2 {
+      color: #667eea;
+      margin-bottom: 20px;
+      font-size: 1.5em;
+    }
+    
+    /* 对话区域 */
+    .chat-container {
+      height: 400px;
+      overflow-y: auto;
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 10px;
+      margin-bottom: 15px;
+    }
+    
+    .message {
+      margin-bottom: 15px;
+      padding: 12px 15px;
+      border-radius: 10px;
+      animation: fadeIn 0.3s ease;
+    }
+    
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    
+    .message.user {
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      color: white;
+      margin-left: 50px;
+    }
+    
+    .message.agent {
+      background: white;
+      border: 2px solid #e9ecef;
+      margin-right: 50px;
+    }
+    
+    .message.system {
+      background: #fff3cd;
+      border-left: 4px solid #ffc107;
+      font-size: 0.9em;
+    }
+    
+    .input-group {
+      display: flex;
+      gap: 10px;
+    }
+    
+    .input-group input {
+      flex: 1;
+      padding: 12px 15px;
+      border: 2px solid #e9ecef;
+      border-radius: 8px;
+      font-size: 1em;
+      transition: border-color 0.3s;
+    }
+    
+    .input-group input:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+    
+    .input-group button {
+      padding: 12px 25px;
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 1em;
+      transition: transform 0.2s;
+    }
+    
+    .input-group button:hover {
+      transform: translateY(-2px);
+    }
+    
+    .input-group button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    
+    /* 工具展示 */
+    .tools-list {
+      display: grid;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    
+    .tool-item {
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 8px;
+      border-left: 4px solid #667eea;
+    }
+    
+    .tool-item h3 {
+      color: #333;
+      margin-bottom: 5px;
+      font-size: 1em;
+    }
+    
+    .tool-item p {
+      color: #666;
+      font-size: 0.9em;
+    }
+    
+    /* 示例问题 */
+    .examples {
+      display: grid;
+      gap: 10px;
+      margin-top: 20px;
+    }
+    
+    .example-btn {
+      padding: 10px;
+      background: #e7f3ff;
+      border: 1px solid #b3d9ff;
+      border-radius: 6px;
+      cursor: pointer;
+      text-align: left;
+      transition: all 0.2s;
+    }
+    
+    .example-btn:hover {
+      background: #667eea;
+      color: white;
+      transform: translateX(5px);
+    }
+    
+    /* 图表展示 */
+    #chart-container {
+      width: 100%;
+      height: 500px;
+      margin-top: 20px;
+    }
+    
+    /* 加载动画 */
+    .loading {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      border: 3px solid #f3f3f3;
+      border-top: 3px solid #667eea;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    
+    /* 流式展示样式 */
+    .stream-content {
+      margin-top: 10px;
+    }
+    
+    .step-indicator {
+      display: inline-block;
+      padding: 4px 8px;
+      background: #e7f3ff;
+      color: #667eea;
+      border-radius: 4px;
+      font-size: 0.85em;
+      font-weight: bold;
+      margin-bottom: 5px;
+    }
+    
+    .tool-call {
+      margin: 10px 0;
+      padding: 10px;
+      background: #fff3cd;
+      border-left: 3px solid #ffc107;
+      border-radius: 4px;
+      animation: fadeIn 0.3s ease;
+    }
+    
+    .tool-name {
+      font-weight: bold;
+      color: #856404;
+      margin: 5px 0;
+    }
+    
+    .args-preview {
+      font-family: 'Courier New', monospace;
+      font-size: 0.85em;
+      color: #666;
+      background: #f8f9fa;
+      padding: 5px;
+      border-radius: 3px;
+      overflow-x: auto;
+    }
+    
+    .tool-result {
+      margin: 10px 0;
+      padding: 10px;
+      background: #d4edda;
+      border-left: 3px solid #28a745;
+      border-radius: 4px;
+      animation: fadeIn 0.3s ease;
+    }
+    
+    .final-response {
+      margin-top: 15px;
+      padding: 15px;
+      background: #e7f3ff;
+      border-left: 3px solid #667eea;
+      border-radius: 4px;
+      animation: fadeIn 0.3s ease;
+    }
+    
+    .final-response p {
+      margin-top: 10px;
+      line-height: 1.6;
+    }
+    
+    .error {
+      color: #dc3545;
+      font-weight: bold;
+    }
+    
+    /* 响应式 */
+    @media (max-width: 1024px) {
+      .main-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🤖 智能数据分析 Agent</h1>
+      <p>基于 ReAct 架构的自主决策数据分析系统 | 自然语言驱动的数据可视化</p>
+    </header>
+    
+    <div class="main-grid">
+      <!-- 左侧面板 -->
+      <div class="left-panel">
+        <div class="card" style="margin-bottom: 20px;">
+          <h2>💬 对话交互</h2>
+          <div class="chat-container" id="chat-container">
+            <div class="message agent">
+              <strong>Agent:</strong> 你好！我是智能数据分析助手，可以帮你：
+              <ul style="margin-top: 10px; padding-left: 20px;">
+                <li>📊 查询销售数据</li>
+                <li>📈 生成可视化图表</li>
+                <li>📉 统计分析指标</li>
+                <li>💾 导出分析结果</li>
+              </ul>
+              <p style="margin-top: 10px;">请用自然语言描述你想查看的数据分析需求！</p>
+            </div>
+          </div>
+          <div class="input-group">
+            <input type="text" id="user-input" placeholder="例如：我想看华东地区各产品的销售情况">
+            <button id="send-btn" onclick="sendMessage()">发送</button>
+          </div>
+        </div>
+        
+        <div class="card">
+          <h2>🛠️ Agent 工具集</h2>
+          <div class="tools-list" id="tools-list"></div>
+          
+          <h3 style="margin-top: 20px; color: #667eea;">💡 示例问题</h3>
+          <div class="examples">
+            <button class="example-btn" onclick="useExample('展示华东地区各产品的销售总额')">
+              展示华东地区各产品的销售总额
+            </button>
+            <button class="example-btn" onclick="useExample('绘制2024年上半年各月份的销售趋势折线图')">
+              绘制2024年上半年各月份的销售趋势折线图
+            </button>
+            <button class="example-btn" onclick="useExample('统计所有地区的笔记本电脑总销量')">
+              统计所有地区的笔记本电脑总销量
+            </button>
+            <button class="example-btn" onclick="useExample('用饼图展示各地区的销售占比')">
+              用饼图展示各地区的销售占比
+            </button>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 右侧图表区域 -->
+      <div class="card">
+        <h2>📊 数据可视化</h2>
+        <div id="chart-container"></div>
+      </div>
+    </div>
+  </div>
+  
+  <script>
+    let chart = null;
+    
+    // 初始化
+    async function init() {
+      // 加载工具列表
+      try {
+        const response = await fetch('/api/tools');
+        const data = await response.json();
+        if (data.success) {
+          const toolsList = document.getElementById('tools-list');
+          toolsList.innerHTML = data.tools.map(tool => `
+            <div class="tool-item">
+              <h3>${tool.name}</h3>
+              <p>${tool.description}</p>
+            </div>
+          `).join('');
+        }
+      } catch (error) {
+        console.error('加载工具列表失败:', error);
+      }
+      
+      // 初始化图表
+      chart = echarts.init(document.getElementById('chart-container'));
+      
+      // 回车发送
+      document.getElementById('user-input').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') sendMessage();
+      });
+    }
+    
+    // 添加消息到聊天框
+    function addMessage(role, content) {
+      const chatContainer = document.getElementById('chat-container');
+      const messageDiv = document.createElement('div');
+      messageDiv.className = `message ${role}`;
+      
+      if (role === 'agent' && content.includes('调用工具')) {
+        messageDiv.innerHTML = `<strong>Agent:</strong> ${content}<div class="loading" style="margin-top: 10px;"></div>`;
+      } else {
+        messageDiv.innerHTML = `<strong>${role === 'user' ? '你' : 'Agent'}:</strong> ${content}`;
+      }
+      
+      chatContainer.appendChild(messageDiv);
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+      
+      return messageDiv;
+    }
+    
+    // 发送消息（流式版本）
+    async function sendMessage() {
+      const input = document.getElementById('user-input');
+      const sendBtn = document.getElementById('send-btn');
+      const userInput = input.value.trim();
+      
+      if (!userInput) return;
+      
+      // 禁用输入
+      input.disabled = true;
+      sendBtn.disabled = true;
+      
+      // 添加用户消息
+      addMessage('user', userInput);
+      input.value = '';
+      
+      // 创建 Agent 消息容器（用于流式展示）
+      const agentMessageDiv = document.createElement('div');
+      agentMessageDiv.className = 'message agent';
+      agentMessageDiv.innerHTML = '<strong>Agent:</strong> <div class="stream-content"></div>';
+      document.getElementById('chat-container').appendChild(agentMessageDiv);
+      
+      const streamContent = agentMessageDiv.querySelector('.stream-content');
+      
+      // 添加初始状态
+      streamContent.innerHTML = '<div class="loading"></div> 正在分析您的需求...';
+      
+      try {
+        // 使用 EventSource 的 POST 请求（需要自定义实现）
+        const eventSource = createEventSource('/api/agent/stream', { userInput });
+        
+        // 监听步骤事件
+        eventSource.addEventListener('step', (e) => {
+          const data = JSON.parse(e.data);
+          if (data.type === 'step_start') {
+            streamContent.innerHTML = `<div class="loading"></div> ${data.message}`;
+          }
+        });
+        
+        // 监听工具调用事件
+        eventSource.addEventListener('tool_call', (e) => {
+          const data = JSON.parse(e.data);
+          const stepIndicator = `<div class="step-indicator">第 ${data.step} 步</div>`;
+          const toolName = `<div class="tool-name">🛠️ 调用工具: ${data.tool}</div>`;
+          const argsPreview = `<div class="args-preview">${JSON.stringify(data.args).substring(0, 100)}</div>`;
+          
+          streamContent.innerHTML += `
+            <div class="tool-call">
+              ${stepIndicator}
+              ${toolName}
+              ${argsPreview}
+            </div>
+          `;
+          scrollToBottom();
+        });
+        
+        // 监听工具结果事件
+        eventSource.addEventListener('tool_result', (e) => {
+          const data = JSON.parse(e.data);
+          const resultHtml = `
+            <div class="tool-result">
+              ✅ ${data.result.summary}
+            </div>
+          `;
+          streamContent.innerHTML += resultHtml;
+          scrollToBottom();
+        });
+        
+        // 监听完成事件
+        eventSource.addEventListener('complete', (e) => {
+          const data = JSON.parse(e.data);
+          
+          // 显示最终响应
+          streamContent.innerHTML += `
+            <div class="final-response">
+              <strong>📊 分析结果:</strong>
+              <p>${data.content}</p>
+            </div>
+          `;
+          
+          // 如果有图表配置，渲染图表
+          if (data.chartConfig) {
+            renderChart(data.chartConfig);
+          }
+          
+          eventSource.close();
+          resetInput();
+        });
+        
+        // 监听错误事件
+        eventSource.addEventListener('error', (e) => {
+          const data = JSON.parse(e.data);
+          streamContent.innerHTML = `<div class="error">❌ 执行失败: ${data.error}</div>`;
+          eventSource.close();
+          resetInput();
+        });
+        
+      } catch (error) {
+        streamContent.innerHTML = `<div class="error">❌ 请求失败: ${error.message}</div>`;
+        resetInput();
+      }
+      
+      function resetInput() {
+        input.disabled = false;
+        sendBtn.disabled = false;
+        input.focus();
+      }
+    }
+    
+    // 创建 EventSource（支持 POST 请求）
+    function createEventSource(url, body) {
+      const eventSource = new EventSourcePolyfill(url, body);
+      return eventSource;
+    }
+    
+    // EventSource Polyfill（支持 POST）
+    class EventSourcePolyfill {
+      constructor(url, body) {
+        this.url = url;
+        this.body = body;
+        this.listeners = {};
+        this.connect();
+      }
+      
+      connect() {
+        fetch(this.url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(this.body)
+        })
+          .then(response => {
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            
+            const readStream = () => {
+              reader.read().then(({ done, value }) => {
+                if (done) {
+                  return;
+                }
+                
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+                
+                let currentEvent = 'message';
+                let currentData = '';
+                
+                for (const line of lines) {
+                  if (line.startsWith('event:')) {
+                    currentEvent = line.substring(6).trim();
+                  } else if (line.startsWith('data:')) {
+                    currentData = line.substring(5).trim();
+                  } else if (line.trim() === '') {
+                    if (currentData && this.listeners[currentEvent]) {
+                      this.listeners[currentEvent].forEach(callback => {
+                        callback({ data: currentData });
+                      });
+                    }
+                    currentEvent = 'message';
+                    currentData = '';
+                  }
+                }
+                
+                readStream();
+              });
+            };
+            
+            readStream();
+          })
+          .catch(error => {
+            if (this.listeners.error) {
+              this.listeners.error.forEach(callback => {
+                callback({ data: JSON.stringify({ error: error.message }) });
+              });
+            }
+          });
+      }
+      
+      addEventListener(event, callback) {
+        if (!this.listeners[event]) {
+          this.listeners[event] = [];
+        }
+        this.listeners[event].push(callback);
+      }
+      
+      close() {
+        // 清理资源
+        this.listeners = {};
+      }
+    }
+    
+    // 滚动到底部
+    function scrollToBottom() {
+      const chatContainer = document.getElementById('chat-container');
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+    }
+    
+    // 渲染图表
+    function renderChart(config) {
+      const option = {
+        title: {
+          text: config.title,
+          left: 'center',
+          textStyle: { fontSize: 20, fontWeight: 'bold' }
+        },
+        tooltip: {
+          trigger: config.type === 'pie' ? 'item' : 'axis',
+          formatter: config.type === 'pie' ? '{b}: {c} ({d}%)' : '{b}: {c}'
+        },
+        xAxis: config.type !== 'pie' ? {
+          type: 'category',
+          data: config.labels,
+          axisLabel: { fontSize: 12 }
+        } : null,
+        yAxis: config.type !== 'pie' ? {
+          type: 'value',
+          axisLabel: { fontSize: 12 }
+        } : null,
+        series: [{
+          name: config.title,
+          type: config.type,
+          data: config.values,
+          itemStyle: {
+            color: function(params) {
+              const colors = ['#667eea', '#764ba2', '#f093fb', '#f5576c', '#4facfe', '#00f2fe'];
+              return colors[params.dataIndex % colors.length];
+            }
+          },
+          label: {
+            show: config.type === 'pie',
+            position: 'outside',
+            formatter: '{b}: {c}'
+          }
+        }]
+      };
+      
+      chart.setOption(option, true);
+    }
+    
+    // 使用示例问题
+    function useExample(example) {
+      document.getElementById('user-input').value = example;
+      sendMessage();
+    }
+    
+    // 页面加载完成后初始化
+    window.addEventListener('load', init);
+    
+    // 窗口大小改变时重绘图表
+    window.addEventListener('resize', () => {
+      if (chart) chart.resize();
+    });
+  </script>
+</body>
+</html>
