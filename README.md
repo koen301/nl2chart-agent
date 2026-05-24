@@ -21,10 +21,11 @@
 
 - **自主决策**: Agent 使用 `tool_choice: 'auto'` 自主选择工具，无需预设流程
 - **多步推理**: 实现 Thought → Action → Observation 循环，支持复杂任务分解
-- **工具学习**: 设计 4 个专业工具函数，覆盖完整数据分析链路
+- **工具学习**: 设计 5 个专业工具函数，覆盖完整数据分析链路
 - **上下文管理**: 维护完整对话历史，实现智能上下文感知
 - **实时交互**: 现代化对话式 UI，支持流式消息展示和动态图表渲染
 - **🌊 流式输出**: 使用 Server-Sent Events (SSE) 实时展示 Agent 思考过程
+- **📁 文件上传**: 支持 Excel/CSV 文件导入，自主分析上传数据
 
 ---
 
@@ -52,7 +53,7 @@ Agent: "已为您生成华东地区产品销售总额的柱状图。其中笔记
 | **地区** | 华东、华北、华南、西南 |
 | **产品** | 笔记本电脑、手机、平板电脑 |
 | **时间** | 2024年1月 - 2024年6月 |
-| **图表类型** | 柱状图、折线图、饼图 |
+| **图表类型** | 柱状图、折线图、饼图、散点图、雷达图、热力图、仪表盘 |
 
 ---
 
@@ -171,7 +172,8 @@ for (let step = 0; step < maxSteps; step++) {
 
 | 工具名称 | 功能描述 | 输入参数 | 输出 |
 |---------|---------|---------|------|
-| **querySalesData** | 查询销售数据 | region, product, dateRange, groupBy | 数据集 |
+| **querySalesData** | 查询内置销售数据库 | region, product, dateRange, groupBy | 数据集 |
+| **queryUploadedData** | 查询用户上传的数据集 | datasetId, action, filters | 数据集/统计信息 |
 | **calculateStatistics** | 统计分析 | metric, operation | 统计值 |
 | **generateChartConfig** | 生成图表配置 | type, title, labels, values | 图表配置对象 |
 | **exportData** | 导出数据 | format, limit | 导出数据 |
@@ -325,15 +327,16 @@ for (let step = 0; step < maxSteps; step++) {
 | 工具调用准确率 | > 90% (标准测试集) |
 | 最大执行步数 | 5 步 (可配置) |
 | 数据量 | 44 条 Mock 记录 |
-| 支持图表类型 | 3 种 (柱状图、折线图、饼图) |
+| 支持图表类型 | 7 种 (柱状图、折线图、饼图、散点图、雷达图、热力图、仪表盘) |
+| 文件支持 | CSV、Excel (.xlsx/.xls) |
 
 ---
 
 ## 🔮 未来规划
 
 - [x] **流式输出**: 实现 SSE 实时展示 Agent 思考过程 ✨
-- [ ] **文件上传**: 支持 Excel/CSV 文件导入分析
-- [ ] **更多图表**: 添加散点图、雷达图、热力图等
+- [x] **文件上传**: 支持 Excel/CSV 文件导入分析 ✨
+- [x] **更多图表**: 添加散点图、雷达图、热力图等 ✨
 - [ ] **RAG 能力**: 接入向量数据库，支持知识库查询
 - [ ] **多 Agent 协作**: Planner + Executor + Reviewer 架构
 - [ ] **评估框架**: 自动化工具选择准确率测试

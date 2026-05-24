@@ -139,6 +139,40 @@
       cursor: not-allowed;
     }
     
+    .input-group .icon-btn {
+      padding: 12px 12px;
+      font-size: 1em;
+      font-weight: bold;
+      background: #f0f0f0;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+    }
+    
+    .input-group .icon-btn:hover {
+      background: #e0e0e0;
+      border-color: #667eea;
+    }
+    
+    #upload-panel {
+      animation: slideDown 0.2s ease-out;
+    }
+    
+    @keyframes slideDown {
+      from {
+        opacity: 0;
+        transform: translateY(-10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    
     /* 文件上传区域 */
     .upload-area {
       border: 2px dashed #ddd;
@@ -376,22 +410,22 @@
           </div>
           <div class="input-group">
             <input type="text" id="user-input" placeholder="例如：我想看华东地区各产品的销售情况">
+            <button id="upload-btn" class="icon-btn" onclick="toggleUploadPanel()" title="上传csv/excel数据文件分析">+</button>
             <button id="send-btn" onclick="sendMessage()">发送</button>
           </div>
-        </div>
-        
-        <div class="card" style="margin-bottom: 20px;">
-          <h2>🚀 上传数据文件</h2>
-          <div class="upload-area" id="upload-area">
-            <input type="file" id="file-input" accept=".csv,.xlsx,.xls" style="display: none;">
-            <div class="upload-content" onclick="document.getElementById('file-input').click()">
-              <div class="upload-icon">📤</div>
-              <div>点击或拖拽文件到此处上传</div>
-              <div style="font-size: 0.85em; color: #999; margin-top: 5px;">支持 CSV、Excel 文件</div>
+          <div id="upload-panel" class="card" style="margin-top: 10px; display: none;">
+            <h2>📁 上传数据文件</h2>
+            <div class="upload-area" id="upload-area">
+              <input type="file" id="file-input" accept=".csv,.xlsx,.xls" style="display: none;">
+              <div class="upload-content" onclick="document.getElementById('file-input').click()">
+                <div class="upload-icon">📤</div>
+                <div>点击或拖拽文件到此处上传</div>
+                <div style="font-size: 0.85em; color: #999; margin-top: 5px;">支持 CSV、Excel 文件</div>
+              </div>
             </div>
+            <div id="upload-status"></div>
+            <div id="datasets-list" style="margin-top: 15px;"></div>
           </div>
-          <div id="upload-status"></div>
-          <div id="datasets-list" style="margin-top: 15px;"></div>
         </div>
         
         <div class="card">
@@ -423,6 +457,12 @@
             </button>
             <button class="example-btn" onclick="useExample('用仪表盘展示目标完成率')">
               用仪表盘展示目标完成率
+            </button>
+            <button class="example-btn" onclick="useExample('我上传的文件有哪些字段？')">
+              我上传的文件有哪些字段？
+            </button>
+            <button class="example-btn" onclick="useExample('分析上传文件的销售额')">
+              分析上传文件的销售额
             </button>
           </div>
         </div>
@@ -468,7 +508,6 @@
       
       // 初始化文件上传
       initFileUpload();
-      loadDatasets();
     }
     
     // 初始化文件上传
@@ -506,6 +545,17 @@
         // 清空文件输入
         fileInput.value = '';
       });
+    }
+    
+    // 切换上传面板显示/隐藏
+    function toggleUploadPanel() {
+      const panel = document.getElementById('upload-panel');
+      if (panel.style.display === 'none') {
+        panel.style.display = 'block';
+        loadDatasets();
+      } else {
+        panel.style.display = 'none';
+      }
     }
     
     // 加载数据集列表
