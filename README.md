@@ -362,17 +362,9 @@ for (let step = 0; step < maxSteps; step++) {
 
 ## 📧 联系方式
 
-- **作者**: [Your Name]
+- **作者**: Kris
 - **GitHub**: [https://github.com/koen301/nl2chart-agent](https://github.com/koen301/nl2chart-agent)
-- **邮箱**: your-email@example.com
-
----
-
-## ⭐ Star History
-
-如果这个项目对你有帮助，请给个 Star ⭐️
-
-[![Star History Chart](https://api.star-history.com/svg?repos=koen301/nl2chart-agent&type=Date)](https://star-history.com/#koen301/nl2chart-agent&Date)
+- **邮箱**: kris301@qq.com
 
 ---
 
