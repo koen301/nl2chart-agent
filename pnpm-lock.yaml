@@ -21,8 +21,8 @@ importers:
         specifier: ^5.2.1
         version: 5.2.1
       uuid:
-        specifier: ^14.0.0
-        version: 14.0.0
+        specifier: ^9.0.0
+        version: 9.0.1
 
 packages:
 
@@ -344,8 +344,8 @@ packages:
     resolution: {integrity: sha512-pjy2bYhSsufwWlKwPc+l3cN7+wuJlK6uz0YdJEOlQDbl6jo/YlPi4mb8agUkVC8BF7V8NuzeyPNqRksA3hztKQ==}
     engines: {node: '>= 0.8'}
 
-  uuid@14.0.0:
-    resolution: {integrity: sha512-Qo+uWgilfSmAhXCMav1uYFynlQO7fMFiMVZsQqZRMIXp0O7rR7qjkj+cPvBHLgBqi960QCoo/PH2/6ZtVqKvrg==}
+  uuid@9.0.1:
+    resolution: {integrity: sha512-b+1eJOlsR9K8HJpow9Ok3fiWOWSIcIzXodvv0rQjVoOVNpWMpxf1wZNpt4y9h10odCNrqnYp1OBzRktckBe3sA==}
     hasBin: true
 
   vary@1.1.2:
@@ -716,7 +716,7 @@ snapshots:
 
   unpipe@1.0.0: {}
 
-  uuid@14.0.0: {}
+  uuid@9.0.1: {}
 
   vary@1.1.2: {}
 

@@ -43,3 +43,4 @@ coverage/
 # 测试相关
 test-results/
 playwright-report/
+example/

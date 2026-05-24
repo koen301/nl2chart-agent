@@ -202,6 +202,20 @@ class DataAgent {
         if (!message.tool_calls || message.tool_calls.length === 0) {
           console.log('\n=== Agent 执行完成 ===');
           
+          // 流式发送内容（每 20 个字符发送一次）
+          const content = message.content;
+          const chunkSize = 20;
+          for (let i = 0; i < content.length; i += chunkSize) {
+            yield {
+              event: 'message',
+              data: {
+                type: 'content',
+                content: content.substring(i, i + chunkSize),
+                isEnd: false
+              }
+            };
+          }
+          
           yield {
             event: 'complete',
             data: {

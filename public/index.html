@@ -274,6 +274,13 @@
       line-height: 1.6;
     }
     
+    .message-content {
+      margin-top: 10px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    
     .error {
       color: #dc3545;
       font-weight: bold;
@@ -404,194 +411,144 @@
       
       if (!userInput) return;
       
-      // 禁用输入
       input.disabled = true;
       sendBtn.disabled = true;
       
-      // 添加用户消息
       addMessage('user', userInput);
       input.value = '';
       
-      // 创建 Agent 消息容器（用于流式展示）
       const agentMessageDiv = document.createElement('div');
       agentMessageDiv.className = 'message agent';
       agentMessageDiv.innerHTML = '<strong>Agent:</strong> <div class="stream-content"></div>';
       document.getElementById('chat-container').appendChild(agentMessageDiv);
       
       const streamContent = agentMessageDiv.querySelector('.stream-content');
-      
-      // 添加初始状态
-      streamContent.innerHTML = '<div class="loading"></div> 正在分析您的需求...';
+      let messageContent = '';
       
       try {
-        // 使用 EventSource 的 POST 请求（需要自定义实现）
-        const eventSource = createEventSource('/api/agent/stream', { userInput });
+        const response = await fetch('/api/agent/stream', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userInput })
+        });
         
-        // 监听步骤事件
-        eventSource.addEventListener('step', (e) => {
-          const data = JSON.parse(e.data);
-          if (data.type === 'step_start') {
-            streamContent.innerHTML = `<div class="loading"></div> ${data.message}`;
+        if (!response.ok) {
+          throw new Error(`服务器错误: ${response.status}`);
+        }
+        
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+        
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop();
+          
+          let currentEvent = '';
+          let currentData = '';
+          
+          for (const line of lines) {
+            if (line.startsWith('event:')) {
+              currentEvent = line.substring(6).trim();
+            } else if (line.startsWith('data:')) {
+              currentData = line.substring(5).trim();
+              
+              if (currentData && currentEvent) {
+                 try {
+                   const eventData = JSON.parse(currentData);
+                   
+                   if (currentEvent === 'step' && eventData.type === 'step_start') {
+                     const stepId = `step-${eventData.step}`;
+                     streamContent.innerHTML += `<div id="${stepId}" class="step-indicator">正在执行第 ${eventData.step} 步...</div>`;
+                     scrollToBottom();
+                   }
+                   else if (currentEvent === 'message' && eventData.type === 'content') {
+                     messageContent += eventData.content;
+                     let msgEl = streamContent.querySelector('.message-content');
+                     if (!msgEl) {
+                       msgEl = document.createElement('div');
+                       msgEl.className = 'message-content';
+                       streamContent.appendChild(msgEl);
+                     }
+                     msgEl.innerHTML = messageContent.replace(/\n/g, '<br>');
+                     scrollToBottom();
+                     // 小延迟让浏览器有时间渲染
+                     await new Promise(r => setTimeout(r, 30));
+                   }
+                   else if (currentEvent === 'tool_call') {
+                     const stepId = `step-${eventData.step}`;
+                     const stepEl = document.getElementById(stepId);
+                     if (stepEl) {
+                       stepEl.textContent = `第 ${eventData.step} 步完成`;
+                       stepEl.style.background = '#d4edda';
+                       stepEl.style.color = '#28a745';
+                     }
+                     
+                     const stepIndicator = `<div class="step-indicator">第 ${eventData.step} 步</div>`;
+                     const toolName = `<div class="tool-name">🛠️ 调用工具: ${eventData.tool}</div>`;
+                     const argsPreview = `<div class="args-preview">${JSON.stringify(eventData.args).substring(0, 100)}</div>`;
+                     
+                     streamContent.innerHTML += `<div class="tool-call">${stepIndicator}${toolName}${argsPreview}</div>`;
+                     scrollToBottom();
+                   }
+                   else if (currentEvent === 'tool_result') {
+                     streamContent.innerHTML += `<div class="tool-result">✅ ${eventData.result.summary}</div>`;
+                     scrollToBottom();
+                   }
+                   else if (currentEvent === 'complete') {
+                     const stepElements = streamContent.querySelectorAll('.step-indicator');
+                     stepElements.forEach(el => {
+                       if (el.textContent.includes('正在执行')) {
+                         const stepMatch = el.textContent.match(/第 (\d+) 步/);
+                         if (stepMatch) {
+                           el.textContent = `第 ${stepMatch[1]} 步完成`;
+                           el.style.background = '#d4edda';
+                           el.style.color = '#28a745';
+                         }
+                       }
+                     });
+                     
+                     if (eventData.chartConfig) {
+                       renderChart(eventData.chartConfig);
+                     }
+                   }
+                   else if (currentEvent === 'end') {
+                     input.disabled = false;
+                     sendBtn.disabled = false;
+                     input.focus();
+                   }
+                   else if (currentEvent === 'error') {
+                     streamContent.innerHTML = `<div class="error">❌ 执行失败: ${eventData.error}</div>`;
+                     input.disabled = false;
+                     sendBtn.disabled = false;
+                     input.focus();
+                   }
+                 } catch (e) {
+                   console.warn('JSON解析异常', e);
+                 }
+               }
+            }
           }
-        });
-        
-        // 监听工具调用事件
-        eventSource.addEventListener('tool_call', (e) => {
-          const data = JSON.parse(e.data);
-          const stepIndicator = `<div class="step-indicator">第 ${data.step} 步</div>`;
-          const toolName = `<div class="tool-name">🛠️ 调用工具: ${data.tool}</div>`;
-          const argsPreview = `<div class="args-preview">${JSON.stringify(data.args).substring(0, 100)}</div>`;
-          
-          streamContent.innerHTML += `
-            <div class="tool-call">
-              ${stepIndicator}
-              ${toolName}
-              ${argsPreview}
-            </div>
-          `;
-          scrollToBottom();
-        });
-        
-        // 监听工具结果事件
-        eventSource.addEventListener('tool_result', (e) => {
-          const data = JSON.parse(e.data);
-          const resultHtml = `
-            <div class="tool-result">
-              ✅ ${data.result.summary}
-            </div>
-          `;
-          streamContent.innerHTML += resultHtml;
-          scrollToBottom();
-        });
-        
-        // 监听完成事件
-        eventSource.addEventListener('complete', (e) => {
-          const data = JSON.parse(e.data);
-          
-          // 显示最终响应
-          streamContent.innerHTML += `
-            <div class="final-response">
-              <strong>📊 分析结果:</strong>
-              <p>${data.content}</p>
-            </div>
-          `;
-          
-          // 如果有图表配置，渲染图表
-          if (data.chartConfig) {
-            renderChart(data.chartConfig);
-          }
-          
-          eventSource.close();
-          resetInput();
-        });
-        
-        // 监听错误事件
-        eventSource.addEventListener('error', (e) => {
-          const data = JSON.parse(e.data);
-          streamContent.innerHTML = `<div class="error">❌ 执行失败: ${data.error}</div>`;
-          eventSource.close();
-          resetInput();
-        });
+        }
         
       } catch (error) {
         streamContent.innerHTML = `<div class="error">❌ 请求失败: ${error.message}</div>`;
-        resetInput();
-      }
-      
-      function resetInput() {
         input.disabled = false;
         sendBtn.disabled = false;
         input.focus();
       }
     }
     
-    // 创建 EventSource（支持 POST 请求）
-    function createEventSource(url, body) {
-      const eventSource = new EventSourcePolyfill(url, body);
-      return eventSource;
-    }
-    
-    // EventSource Polyfill（支持 POST）
-    class EventSourcePolyfill {
-      constructor(url, body) {
-        this.url = url;
-        this.body = body;
-        this.listeners = {};
-        this.connect();
-      }
-      
-      connect() {
-        fetch(this.url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(this.body)
-        })
-          .then(response => {
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = '';
-            
-            const readStream = () => {
-              reader.read().then(({ done, value }) => {
-                if (done) {
-                  return;
-                }
-                
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop() || '';
-                
-                let currentEvent = 'message';
-                let currentData = '';
-                
-                for (const line of lines) {
-                  if (line.startsWith('event:')) {
-                    currentEvent = line.substring(6).trim();
-                  } else if (line.startsWith('data:')) {
-                    currentData = line.substring(5).trim();
-                  } else if (line.trim() === '') {
-                    if (currentData && this.listeners[currentEvent]) {
-                      this.listeners[currentEvent].forEach(callback => {
-                        callback({ data: currentData });
-                      });
-                    }
-                    currentEvent = 'message';
-                    currentData = '';
-                  }
-                }
-                
-                readStream();
-              });
-            };
-            
-            readStream();
-          })
-          .catch(error => {
-            if (this.listeners.error) {
-              this.listeners.error.forEach(callback => {
-                callback({ data: JSON.stringify({ error: error.message }) });
-              });
-            }
-          });
-      }
-      
-      addEventListener(event, callback) {
-        if (!this.listeners[event]) {
-          this.listeners[event] = [];
-        }
-        this.listeners[event].push(callback);
-      }
-      
-      close() {
-        // 清理资源
-        this.listeners = {};
-      }
-    }
-    
     // 滚动到底部
     function scrollToBottom() {
       const chatContainer = document.getElementById('chat-container');
-      chatContainer.scrollTop = chatContainer.scrollHeight;
+      requestAnimationFrame(() => {
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+      });
     }
     
     // 渲染图表
