@@ -135,8 +135,7 @@ nl2chart-agent/
 │       └── echarts.min.js # ECharts 图表库
 │
 └── docs/                  # 文档目录
-    ├── README-RESUME.md   # 简历亮点文档
-    └── ARCHITECTURE.md    # 架构设计说明 (TODO)
+    └── STREAMING.md       # 流式输出功能说明
 ```
 
 ---
@@ -334,10 +333,6 @@ for (let step = 0; step < maxSteps; step++) {
 
 ## 🔮 未来规划
 
-- [x] **流式输出**: 实现 SSE 实时展示 Agent 思考过程 ✨
-- [x] **文件上传**: 支持 Excel/CSV 文件导入分析 ✨
-- [x] **更多图表**: 添加散点图、雷达图、热力图等 ✨
-- [ ] **RAG 能力**: 接入向量数据库，支持知识库查询
 - [ ] **多 Agent 协作**: Planner + Executor + Reviewer 架构
 - [ ] **评估框架**: 自动化工具选择准确率测试
 - [ ] **用户认证**: 支持多用户会话管理
