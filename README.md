@@ -8,6 +8,14 @@
 
 ---
 
+## 🌍 在线演示
+
+**在线体验地址**: [https://nl2chart-agent-production.up.railway.app/](https://nl2chart-agent-production.up.railway.app/)
+
+> ⚠️ 注意：演示环境使用的免费 LLM API 可能存在调用限制，如遇问题请自行部署。
+
+---
+
 ## 📖 项目简介
 
 **NL2Chart Agent** 是一个基于大语言模型的智能数据分析系统，采用 **ReAct (Reasoning + Acting)** 架构实现。用户只需输入自然语言描述，Agent 就能自主完成：

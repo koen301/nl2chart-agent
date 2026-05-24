@@ -12,7 +12,7 @@ const { DataAgent } = require('./agent');
 const app = express();
 app.use(cors());
 app.use(express.json());
-app.use(express.static('public'));  // 托管前端页面
+app.use(express.static(path.join(__dirname, 'public')));  // 托管前端页面
 
 const API_KEY = process.env.API_KEY;
 const API_URL = process.env.API_URL;
