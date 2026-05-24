@@ -139,6 +139,62 @@
       cursor: not-allowed;
     }
     
+    /* 文件上传区域 */
+    .upload-area {
+      border: 2px dashed #ddd;
+      border-radius: 10px;
+      padding: 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+    
+    .upload-area:hover {
+      border-color: #667eea;
+      background: #f8f9ff;
+    }
+    
+    .upload-content {
+      padding: 10px;
+    }
+    
+    .upload-icon {
+      font-size: 2em;
+      margin-bottom: 10px;
+    }
+    
+    #upload-status {
+      margin-top: 10px;
+      font-size: 0.9em;
+    }
+    
+    .upload-success {
+      color: #28a745;
+    }
+    
+    .upload-error {
+      color: #dc3545;
+    }
+    
+    .dataset-item {
+      padding: 10px;
+      background: #f8f9fa;
+      border-radius: 6px;
+      margin-bottom: 8px;
+      font-size: 0.9em;
+    }
+    
+    .dataset-item .name {
+      font-weight: bold;
+      color: #333;
+    }
+    
+    .dataset-item .info {
+      color: #666;
+      font-size: 0.85em;
+      margin-top: 3px;
+    }
+    
     /* 工具展示 */
     .tools-list {
       display: grid;
@@ -324,6 +380,20 @@
           </div>
         </div>
         
+        <div class="card" style="margin-bottom: 20px;">
+          <h2>🚀 上传数据文件</h2>
+          <div class="upload-area" id="upload-area">
+            <input type="file" id="file-input" accept=".csv,.xlsx,.xls" style="display: none;">
+            <div class="upload-content" onclick="document.getElementById('file-input').click()">
+              <div class="upload-icon">📤</div>
+              <div>点击或拖拽文件到此处上传</div>
+              <div style="font-size: 0.85em; color: #999; margin-top: 5px;">支持 CSV、Excel 文件</div>
+            </div>
+          </div>
+          <div id="upload-status"></div>
+          <div id="datasets-list" style="margin-top: 15px;"></div>
+        </div>
+        
         <div class="card">
           <h2>🛠️ Agent 工具集</h2>
           <div class="tools-list" id="tools-list"></div>
@@ -341,6 +411,18 @@
             </button>
             <button class="example-btn" onclick="useExample('用饼图展示各地区的销售占比')">
               用饼图展示各地区的销售占比
+            </button>
+            <button class="example-btn" onclick="useExample('用雷达图展示各产品的销售指标')">
+              用雷达图展示各产品的销售指标
+            </button>
+            <button class="example-btn" onclick="useExample('用散点图展示销量与销售额的关系')">
+              用散点图展示销量与销售额的关系
+            </button>
+            <button class="example-btn" onclick="useExample('用环形图展示各地区销售额占比')">
+              用环形图展示各地区销售额占比
+            </button>
+            <button class="example-btn" onclick="useExample('用仪表盘展示目标完成率')">
+              用仪表盘展示目标完成率
             </button>
           </div>
         </div>
@@ -383,6 +465,71 @@
       document.getElementById('user-input').addEventListener('keypress', (e) => {
         if (e.key === 'Enter') sendMessage();
       });
+      
+      // 初始化文件上传
+      initFileUpload();
+      loadDatasets();
+    }
+    
+    // 初始化文件上传
+    function initFileUpload() {
+      const fileInput = document.getElementById('file-input');
+      const uploadStatus = document.getElementById('upload-status');
+      
+      fileInput.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        uploadStatus.innerHTML = '<span>正在上传和解析文件...</span>';
+        
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        try {
+          const response = await fetch('/api/upload', {
+            method: 'POST',
+            body: formData
+          });
+          
+          const result = await response.json();
+          
+          if (result.success) {
+            uploadStatus.innerHTML = `<span class="upload-success">✅ 文件上传成功！${result.dataset.rowCount} 行数据，${result.dataset.columns.length} 列</span>`;
+            loadDatasets();
+          } else {
+            uploadStatus.innerHTML = `<span class="upload-error">❌ ${result.error}</span>`;
+          }
+        } catch (error) {
+          uploadStatus.innerHTML = `<span class="upload-error">❌ 上传失败: ${error.message}</span>`;
+        }
+        
+        // 清空文件输入
+        fileInput.value = '';
+      });
+    }
+    
+    // 加载数据集列表
+    async function loadDatasets() {
+      try {
+        const response = await fetch('/api/datasets');
+        const result = await response.json();
+        
+        const datasetsList = document.getElementById('datasets-list');
+        
+        if (result.datasets && result.datasets.length > 0) {
+          datasetsList.innerHTML = '<h4 style="margin-bottom: 10px; color: #667eea;">已上传的数据集：</h4>' + 
+            result.datasets.map(d => `
+              <div class="dataset-item">
+                <div class="name">📄 ${d.name}</div>
+                <div class="info">${d.rowCount} 行 × ${d.columns.length} 列</div>
+              </div>
+            `).join('');
+        } else {
+          datasetsList.innerHTML = '';
+        }
+      } catch (error) {
+        console.error('加载数据集失败:', error);
+      }
     }
     
     // 添加消息到聊天框
@@ -553,42 +700,186 @@
     
     // 渲染图表
     function renderChart(config) {
-      const option = {
+      const chartType = config.type;
+      const colors = ['#667eea', '#764ba2', '#f093fb', '#f5576c', '#4facfe', '#00f2fe', '#fa709a', '#fee140'];
+      
+      let option = {
         title: {
           text: config.title,
           left: 'center',
           textStyle: { fontSize: 20, fontWeight: 'bold' }
         },
         tooltip: {
-          trigger: config.type === 'pie' ? 'item' : 'axis',
-          formatter: config.type === 'pie' ? '{b}: {c} ({d}%)' : '{b}: {c}'
+          trigger: chartType === 'pie' || chartType === 'doughnut' ? 'item' : 'axis'
         },
-        xAxis: config.type !== 'pie' ? {
+        legend: {
+          top: 'bottom',
+          data: config.labels || []
+        },
+        series: []
+      };
+      
+      // 根据图表类型配置不同的选项
+      if (chartType === 'pie' || chartType === 'doughnut') {
+        option.tooltip.formatter = '{b}: {c} ({d}%)';
+        option.series.push({
+          name: config.title,
+          type: chartType,
+          data: config.labels.map((label, i) => ({
+            name: label,
+            value: config.values[i]
+          })),
+          radius: chartType === 'doughnut' ? ['40%', '70%'] : '65%',
+          emphasis: {
+            itemStyle: {
+              shadowBlur: 10,
+              shadowOffsetX: 0,
+              shadowColor: 'rgba(0, 0, 0, 0.5)'
+            }
+          },
+          label: {
+            show: true,
+            formatter: '{b}: {c}'
+          }
+        });
+      }
+      else if (chartType === 'radar') {
+        option.tooltip = { trigger: 'item' };
+        option.radar = {
+          indicator: config.labels.map(label => ({ name: label, max: Math.max(...config.values) * 1.2 })),
+          shape: 'circle',
+          splitNumber: 5,
+          axisName: { color: '#666' }
+        };
+        option.series.push({
+          name: config.title,
+          type: 'radar',
+          data: [{
+            value: config.values,
+            name: config.title,
+            areaStyle: { opacity: 0.3 }
+          }],
+          itemStyle: { color: colors[0] },
+          lineStyle: { width: 2 }
+        });
+      }
+      else if (chartType === 'scatter') {
+        option.xAxis = {
+          type: 'value',
+          name: config.xLabel || 'X',
+          axisLabel: { fontSize: 12 }
+        };
+        option.yAxis = {
+          type: 'value',
+          name: config.yLabel || 'Y',
+          axisLabel: { fontSize: 12 }
+        };
+        option.series.push({
+          name: config.title,
+          type: 'scatter',
+          symbolSize: 15,
+          data: config.values.map((y, i) => [i, y]),
+          itemStyle: {
+            color: colors[0],
+            shadowBlur: 10,
+            shadowColor: 'rgba(0,0,0,0.3)'
+          }
+        });
+      }
+      else if (chartType === 'heatmap') {
+        option.xAxis = {
+          type: 'category',
+          data: config.xLabels || config.labels,
+          axisLabel: { fontSize: 10, rotate: 45 }
+        };
+        option.yAxis = {
+          type: 'category',
+          data: config.yLabels || ['数据'],
+          axisLabel: { fontSize: 10 }
+        };
+        option.visualMap = {
+          min: 0,
+          max: Math.max(...config.values.flat()) || 100,
+          calculable: true,
+          orient: 'horizontal',
+          left: 'center',
+          bottom: '0%',
+          inRange: {
+            color: ['#f0f9ff', '#007bff']
+          }
+        };
+        const heatmapData = [];
+        config.values.forEach((row, yi) => {
+          row.forEach((value, xi) => {
+            heatmapData.push([xi, yi, value]);
+          });
+        });
+        option.series.push({
+          name: config.title,
+          type: 'heatmap',
+          data: heatmapData,
+          label: { show: true, fontSize: 10 },
+          emphasis: {
+            itemStyle: {
+              shadowBlur: 10,
+              shadowColor: 'rgba(0, 0, 0, 0.5)'
+            }
+          }
+        });
+      }
+      else if (chartType === 'gauge') {
+        option.series.push({
+          name: config.title,
+          type: 'gauge',
+          detail: { formatter: '{value}', fontSize: 20 },
+          data: [{ value: config.values[0], name: config.labels[0] || '完成率' }],
+          axisLine: {
+            lineStyle: {
+              width: 20,
+              color: [
+                [0.3, '#67e0e3'],
+                [0.7, '#37a2da'],
+                [1, '#fd666d']
+              ]
+            }
+          },
+          pointer: { itemStyle: { color: 'auto' } }
+        });
+      }
+      else {
+        // 默认柱状图、折线图等
+        option.tooltip.trigger = 'axis';
+        option.xAxis = {
           type: 'category',
           data: config.labels,
           axisLabel: { fontSize: 12 }
-        } : null,
-        yAxis: config.type !== 'pie' ? {
+        };
+        option.yAxis = {
           type: 'value',
           axisLabel: { fontSize: 12 }
-        } : null,
-        series: [{
+        };
+        
+        const isLine = chartType === 'line';
+        option.series.push({
           name: config.title,
-          type: config.type,
+          type: chartType,
           data: config.values,
+          smooth: isLine,
+          areaStyle: isLine ? { opacity: 0.3 } : null,
           itemStyle: {
             color: function(params) {
-              const colors = ['#667eea', '#764ba2', '#f093fb', '#f5576c', '#4facfe', '#00f2fe'];
               return colors[params.dataIndex % colors.length];
             }
           },
           label: {
-            show: config.type === 'pie',
-            position: 'outside',
-            formatter: '{b}: {c}'
+            show: chartType === 'bar',
+            position: 'top'
+          },
+          lineStyle: {
+            width: isLine ? 3 : 1
           }
-        }]
-      };
+        });
+      }
       
       chart.setOption(option, true);
     }

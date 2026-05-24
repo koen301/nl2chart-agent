@@ -21,9 +21,15 @@ class DataAgent {
         role: 'system',
         content: `你是一个智能数据分析 Agent，拥有多种工具帮助用户分析和可视化数据。
 
+数据来源：
+1. 内置销售数据库（地区：华东/华北/华南/西南，产品：笔记本电脑/手机/平板电脑）
+2. 用户上传的 CSV/Excel 数据文件
+
 执行流程：
 1. 分析用户需求，理解用户想看什么数据
-2. 选择合适的工具查询数据（querySalesData）
+2. 确定数据来源：
+   - 如果用户提到"上传的文件"或具体文件名，使用 queryUploadedData 工具
+   - 否则使用 querySalesData 查询内置销售数据
 3. 根据需要进行统计分析（calculateStatistics）
 4. 生成可视化图表配置（generateChartConfig）
 5. 如果需要，导出数据（exportData）

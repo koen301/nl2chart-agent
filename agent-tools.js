@@ -106,6 +106,34 @@ const toolSchemas = {
       },
       required: ['format']
     }
+  },
+  
+  queryUploadedData: {
+    name: 'queryUploadedData',
+    description: '查询用户上传的数据集，支持查看数据内容、字段信息和基本统计',
+    parameters: {
+      type: 'object',
+      properties: {
+        datasetId: {
+          type: 'string',
+          description: '数据集ID，如果不提供则返回所有可用数据集列表'
+        },
+        action: {
+          type: 'string',
+          enum: ['list', 'query', 'info'],
+          description: '操作类型：list=列出所有数据集，query=查询数据，info=查看数据集信息'
+        },
+        filters: {
+          type: 'object',
+          description: '查询过滤条件，键为字段名，值为过滤值'
+        },
+        limit: {
+          type: 'number',
+          description: '限制返回条数，默认100'
+        }
+      },
+      required: ['action']
+    }
   }
 };
 
@@ -237,6 +265,139 @@ class AgentTools {
       format: args.format,
       count: results.length,
       data: results
+    };
+  }
+  
+  // 查询上传的数据集
+  async queryUploadedData(args) {
+    const { action, datasetId, filters, limit = 100 } = args;
+    
+    if (!global.uploadedDatasets) {
+      return {
+        success: false,
+        error: '暂无上传的数据集'
+      };
+    }
+    
+    // 列出所有数据集
+    if (action === 'list') {
+      const datasets = Object.values(global.uploadedDatasets).map(d => ({
+        id: d.id,
+        name: d.name,
+        columns: d.columns,
+        rowCount: d.data.length
+      }));
+      
+      return {
+        success: true,
+        datasets
+      };
+    }
+    
+    // 查看数据集信息
+    if (action === 'info') {
+      if (!datasetId) {
+        return {
+          success: false,
+          error: '请提供 datasetId'
+        };
+      }
+      
+      const dataset = global.uploadedDatasets[datasetId];
+      if (!dataset) {
+        return {
+          success: false,
+          error: '数据集不存在'
+        };
+      }
+      
+      // 计算基本统计
+      const stats = {};
+      dataset.columns.forEach(col => {
+        const values = dataset.data.map(row => row[col]).filter(v => v != null && v !== '');
+        if (values.length > 0) {
+          const numericValues = values.map(v => parseFloat(v)).filter(v => !isNaN(v));
+          if (numericValues.length > 0) {
+            stats[col] = {
+              type: 'numeric',
+              count: values.length,
+              min: Math.min(...numericValues),
+              max: Math.max(...numericValues),
+              avg: (numericValues.reduce((a, b) => a + b, 0) / numericValues.length).toFixed(2)
+            };
+          } else {
+            stats[col] = {
+              type: 'string',
+              count: values.length,
+              unique: new Set(values).size,
+              sample: values.slice(0, 5)
+            };
+          }
+        }
+      });
+      
+      return {
+        success: true,
+        dataset: {
+          id: dataset.id,
+          name: dataset.name,
+          columns: dataset.columns,
+          rowCount: dataset.data.length,
+          stats
+        }
+      };
+    }
+    
+    // 查询数据
+    if (action === 'query') {
+      if (!datasetId) {
+        return {
+          success: false,
+          error: '请提供 datasetId'
+        };
+      }
+      
+      const dataset = global.uploadedDatasets[datasetId];
+      if (!dataset) {
+        return {
+          success: false,
+          error: '数据集不存在'
+        };
+      }
+      
+      let results = dataset.data;
+      
+      // 应用过滤
+      if (filters) {
+        results = results.filter(row => {
+          for (const [key, value] of Object.entries(filters)) {
+            const rowValue = String(row[key] || '').toLowerCase();
+            const filterValue = String(value).toLowerCase();
+            if (!rowValue.includes(filterValue)) return false;
+          }
+          return true;
+        });
+      }
+      
+      // 限制条数
+      results = results.slice(0, limit);
+      
+      return {
+        success: true,
+        dataset: {
+          id: dataset.id,
+          name: dataset.name,
+          columns: dataset.columns
+        },
+        count: results.length,
+        total: dataset.data.length,
+        data: results
+      };
+    }
+    
+    return {
+      success: false,
+      error: '无效的操作类型'
     };
   }
 }

@@ -1,6 +1,11 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const xlsx = require('xlsx');
+const { parse } = require('csv-parse/sync');
 const { initDB } = require('./db');
 const { DataAgent } = require('./agent');
 
@@ -178,6 +183,161 @@ app.post('/api/chart', async (req, res) => {
     console.error('AI 调用失败:', error.message);
     res.status(500).json({ error: 'AI 服务错误' });
   }
+});
+
+// 配置 multer 用于文件上传
+const uploadDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir);
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB 限制
+  fileFilter: (req, file, cb) => {
+    const allowedExt = ['.csv', '.xlsx', '.xls'];
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (allowedExt.includes(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error('只支持 CSV/Excel 文件'));
+    }
+  }
+});
+
+// 解析文件内容
+function parseFile(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  let data = [];
+  let columns = [];
+  
+  if (ext === '.csv') {
+    const fileContent = fs.readFileSync(filePath, 'utf-8');
+    const records = parse(fileContent, {
+      columns: true,
+      skip_empty_lines: true,
+      trim: true
+    });
+    data = records;
+    if (data.length > 0) {
+      columns = Object.keys(data[0]);
+    }
+  } else if (ext === '.xlsx' || ext === '.xls') {
+    const workbook = xlsx.readFile(filePath);
+    const sheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[sheetName];
+    data = xlsx.utils.sheet_to_json(worksheet);
+    if (data.length > 0) {
+      columns = Object.keys(data[0]);
+    }
+  }
+  
+  return { data, columns };
+}
+
+// 文件上传接口
+app.post('/api/upload', upload.single('file'), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ success: false, error: '没有上传文件' });
+  }
+  
+  try {
+    const filePath = req.file.path;
+    const { data, columns } = parseFile(filePath);
+    
+    // 生成数据集ID
+    const datasetId = req.file.filename;
+    
+    // 清理上传的文件（保留数据在内存中）
+    fs.unlinkSync(filePath);
+    
+    // 将数据存储到全局对象中（生产环境应使用数据库）
+    if (!global.uploadedDatasets) {
+      global.uploadedDatasets = {};
+    }
+    global.uploadedDatasets[datasetId] = {
+      id: datasetId,
+      name: req.file.originalname,
+      columns,
+      data,
+      createdAt: new Date().toISOString()
+    };
+    
+    res.json({
+      success: true,
+      dataset: {
+        id: datasetId,
+        name: req.file.originalname,
+        columns,
+        rowCount: data.length
+      }
+    });
+  } catch (error) {
+    console.error('文件解析失败:', error.message);
+    res.status(500).json({ success: false, error: '文件解析失败: ' + error.message });
+  }
+});
+
+// 获取上传的数据集列表
+app.get('/api/datasets', (req, res) => {
+  if (!global.uploadedDatasets) {
+    return res.json({ success: true, datasets: [] });
+  }
+  
+  const datasets = Object.values(global.uploadedDatasets).map(d => ({
+    id: d.id,
+    name: d.name,
+    columns: d.columns,
+    rowCount: d.data.length,
+    createdAt: d.createdAt
+  }));
+  
+  res.json({ success: true, datasets });
+});
+
+// 查询上传的数据集
+app.post('/api/datasets/:id/query', (req, res) => {
+  const { id } = req.params;
+  const { query } = req.body;
+  
+  if (!global.uploadedDatasets || !global.uploadedDatasets[id]) {
+    return res.status(404).json({ success: false, error: '数据集不存在' });
+  }
+  
+  const dataset = global.uploadedDatasets[id];
+  
+  // 简单查询：支持过滤字段
+  let result = dataset.data;
+  
+  if (req.body.filters) {
+    result = result.filter(row => {
+      for (const [key, value] of Object.entries(req.body.filters)) {
+        if (row[key] != value) return false;
+      }
+      return true;
+    });
+  }
+  
+  if (req.body.limit) {
+    result = result.slice(0, req.body.limit);
+  }
+  
+  res.json({
+    success: true,
+    columns: dataset.columns,
+    data: result,
+    total: dataset.data.length
+  });
 });
 
 const PORT = 3000;
