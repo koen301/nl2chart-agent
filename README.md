@@ -112,6 +112,15 @@ LLM_MODEL=gpt-3.5-turbo
 # 或使用其他兼容 API (如 SiliconFlow、智谱等)
 # API_URL=https://api.siliconflow.cn/v1/chat/completions
 # LLM_MODEL=Pro/zai-org/GLM-5
+
+# 数据库配置 (可选)
+# DB_TYPE=json    # 默认使用 JSON File，无需配置
+# DB_TYPE=mysql  # 使用 MySQL，需要配置以下参数
+# MYSQL_HOST=localhost
+# MYSQL_PORT=3306
+# MYSQL_USER=root
+# MYSQL_PASSWORD=your-password
+# MYSQL_DATABASE=nl2chart
 ```
 
 #### 4. 启动服务
@@ -131,8 +140,8 @@ nl2chart-agent/
 ├── server.js              # Express 主服务器 & API 路由
 ├── agent.js               # Agent 引擎 (ReAct 循环实现)
 ├── agent-tools.js         # 工具集定义 & 实现
-├── db.js                  # JSON 数据库模块
-├── data.json              # Mock 销售数据 (44条)
+├── db.js                  # 数据库模块 (支持 JSON File / MySQL)
+├── data.json              # JSON 数据库文件 (44条 Mock 数据)
 ├── package.json           # 项目依赖配置
 ├── .env.example           # 环境变量模板
 ├── .gitignore             # Git 忽略配置
@@ -187,9 +196,10 @@ for (let step = 0; step < maxSteps; step++) {
 
 #### 3. 数据层 (`db.js`)
 
-- 轻量级 JSON 文件数据库
-- 支持动态查询构建（筛选、聚合、排序）
-- 自动初始化 Mock 数据
+- 支持 **JSON File**（默认）和 **MySQL** 两种数据库
+- JSON File 模式：零配置即用，适合开发和演示
+- MySQL 模式：配置环境变量即可切换，适合生产环境
+- 自动初始化 Mock 数据（44条销售记录）
 
 ### 技术栈
 
@@ -198,7 +208,7 @@ for (let step = 0; step < maxSteps; step++) {
 | **Agent 框架** | 自研 ReAct Agent |
 | **LLM API** | OpenAI Compatible Function Calling |
 | **后端** | Node.js + Express.js (v5) |
-| **数据库** | JSON File (自定义查询引擎) |
+| **数据库** | JSON File / MySQL (可配置) |
 | **前端** | HTML/CSS/JS + ECharts v5 |
 | **架构模式** | RESTful API, 模块化设计 |
 

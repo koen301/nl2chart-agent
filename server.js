@@ -12,17 +12,19 @@ const { DataAgent } = require('./agent');
 const app = express();
 app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));  // 托管前端页面
+app.use(express.static(path.join(__dirname, 'public')));
 
 const API_KEY = process.env.API_KEY;
 const API_URL = process.env.API_URL;
 const LLM_MODEL = process.env.LLM_MODEL;
 
-// 初始化数据库
-const db = initDB();
+let db;
+let agent;
 
-// 初始化 Agent
-const agent = new DataAgent(API_URL, API_KEY, LLM_MODEL, db);
+async function startServer() {
+  db = await initDB();
+  agent = new DataAgent(API_URL, API_KEY, LLM_MODEL, db);
+}
 
 // 定义 Function Calling 的 Schema
 const chartFunction = {
@@ -341,8 +343,10 @@ app.post('/api/datasets/:id/query', (req, res) => {
 });
 
 const PORT = 3000;
-app.listen(PORT, () => {
-  console.log(`后端服务运行在 http://localhost:${PORT}`);
-  console.log(`Agent 接口: http://localhost:${PORT}/api/agent`);
-  console.log(`数据概览: http://localhost:${PORT}/api/data/overview`);
+startServer().then(() => {
+  app.listen(PORT, () => {
+    console.log(`后端服务运行在 http://localhost:${PORT}`);
+    console.log(`Agent 接口: http://localhost:${PORT}/api/agent`);
+    console.log(`数据概览: http://localhost:${PORT}/api/data/overview`);
+  });
 });

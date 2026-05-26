@@ -1,10 +1,70 @@
+require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 
 const DB_PATH = path.join(__dirname, 'data.json');
 
-// 初始化数据库
-function initDB() {
+const DB_TYPE = process.env.DB_TYPE || 'json';
+const MYSQL_HOST = process.env.MYSQL_HOST;
+const MYSQL_PORT = process.env.MYSQL_PORT || 3306;
+const MYSQL_USER = process.env.MYSQL_USER || 'root';
+const MYSQL_PASSWORD = process.env.MYSQL_PASSWORD || '';
+const MYSQL_DATABASE = process.env.MYSQL_DATABASE || 'nl2chart';
+
+let mysqlPool = null;
+
+async function initMySQL() {
+  const mysql = require('mysql2/promise');
+  
+  mysqlPool = mysql.createPool({
+    host: MYSQL_HOST,
+    port: parseInt(MYSQL_PORT),
+    user: MYSQL_USER,
+    password: MYSQL_PASSWORD,
+    database: MYSQL_DATABASE,
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
+  });
+
+  const connection = await mysqlPool.getConnection();
+  try {
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS sales_data (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        region VARCHAR(50) NOT NULL,
+        product VARCHAR(100) NOT NULL,
+        sales_amount DECIMAL(15, 2) NOT NULL,
+        quantity INT NOT NULL,
+        sale_date DATE NOT NULL,
+        INDEX idx_region (region),
+        INDEX idx_product (product),
+        INDEX idx_sale_date (sale_date)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+
+    const [rows] = await connection.query('SELECT COUNT(*) as count FROM sales_data');
+    if (rows[0].count === 0) {
+      console.log('正在初始化 Mock 数据到 MySQL...');
+      const mockData = generateMockData();
+      for (const record of mockData) {
+        await connection.query(
+          'INSERT INTO sales_data (region, product, sales_amount, quantity, sale_date) VALUES (?, ?, ?, ?, ?)',
+          [record.region, record.product, record.sales_amount, record.quantity, record.sale_date]
+        );
+      }
+      console.log(`成功插入 ${mockData.length} 条 Mock 数据`);
+    }
+
+    console.log('MySQL 数据库初始化完成');
+  } finally {
+    connection.release();
+  }
+
+  return mysqlPool;
+}
+
+function initJSON() {
   let data = loadData();
   
   // 如果没有数据，插入 Mock 数据
@@ -54,23 +114,18 @@ function saveData(data) {
 // 生成 Mock 数据
 function generateMockData() {
   return [
-    // 2024年1月数据
     { id: 1, region: '华东', product: '笔记本电脑', sales_amount: 125000, quantity: 25, sale_date: '2024-01-15' },
     { id: 2, region: '华东', product: '手机', sales_amount: 89000, quantity: 45, sale_date: '2024-01-18' },
     { id: 3, region: '华东', product: '平板电脑', sales_amount: 67000, quantity: 18, sale_date: '2024-01-22' },
     { id: 4, region: '华北', product: '笔记本电脑', sales_amount: 98000, quantity: 20, sale_date: '2024-01-16' },
     { id: 5, region: '华北', product: '手机', sales_amount: 112000, quantity: 56, sale_date: '2024-01-19' },
     { id: 6, region: '华南', product: '平板电脑', sales_amount: 78000, quantity: 21, sale_date: '2024-01-20' },
-    
-    // 2024年2月数据
     { id: 7, region: '华东', product: '笔记本电脑', sales_amount: 135000, quantity: 27, sale_date: '2024-02-10' },
     { id: 8, region: '华东', product: '手机', sales_amount: 95000, quantity: 48, sale_date: '2024-02-14' },
     { id: 9, region: '华北', product: '笔记本电脑', sales_amount: 105000, quantity: 21, sale_date: '2024-02-11' },
     { id: 10, region: '华北', product: '手机', sales_amount: 118000, quantity: 59, sale_date: '2024-02-15' },
     { id: 11, region: '华南', product: '平板电脑', sales_amount: 82000, quantity: 22, sale_date: '2024-02-18' },
     { id: 12, region: '华南', product: '手机', sales_amount: 71000, quantity: 36, sale_date: '2024-02-20' },
-    
-    // 2024年3月数据
     { id: 13, region: '华东', product: '笔记本电脑', sales_amount: 142000, quantity: 28, sale_date: '2024-03-05' },
     { id: 14, region: '华东', product: '手机', sales_amount: 102000, quantity: 51, sale_date: '2024-03-08' },
     { id: 15, region: '华东', product: '平板电脑', sales_amount: 75000, quantity: 20, sale_date: '2024-03-12' },
@@ -79,8 +134,6 @@ function generateMockData() {
     { id: 18, region: '华南', product: '笔记本电脑', sales_amount: 88000, quantity: 18, sale_date: '2024-03-10' },
     { id: 19, region: '华南', product: '平板电脑', sales_amount: 91000, quantity: 24, sale_date: '2024-03-15' },
     { id: 20, region: '华南', product: '手机', sales_amount: 76000, quantity: 38, sale_date: '2024-03-18' },
-    
-    // 2024年4月数据
     { id: 21, region: '华东', product: '笔记本电脑', sales_amount: 156000, quantity: 31, sale_date: '2024-04-02' },
     { id: 22, region: '华东', product: '手机', sales_amount: 108000, quantity: 54, sale_date: '2024-04-05' },
     { id: 23, region: '华北', product: '笔记本电脑', sales_amount: 122000, quantity: 24, sale_date: '2024-04-03' },
@@ -88,8 +141,6 @@ function generateMockData() {
     { id: 25, region: '华南', product: '平板电脑', sales_amount: 95000, quantity: 25, sale_date: '2024-04-10' },
     { id: 26, region: '西南', product: '笔记本电脑', sales_amount: 67000, quantity: 13, sale_date: '2024-04-12' },
     { id: 27, region: '西南', product: '手机', sales_amount: 54000, quantity: 27, sale_date: '2024-04-15' },
-    
-    // 2024年5月数据
     { id: 28, region: '华东', product: '笔记本电脑', sales_amount: 168000, quantity: 34, sale_date: '2024-05-01' },
     { id: 29, region: '华东', product: '手机', sales_amount: 115000, quantity: 58, sale_date: '2024-05-04' },
     { id: 30, region: '华东', product: '平板电脑', sales_amount: 82000, quantity: 22, sale_date: '2024-05-08' },
@@ -99,8 +150,6 @@ function generateMockData() {
     { id: 34, region: '华南', product: '手机', sales_amount: 85000, quantity: 43, sale_date: '2024-05-09' },
     { id: 35, region: '西南', product: '平板电脑', sales_amount: 72000, quantity: 19, sale_date: '2024-05-10' },
     { id: 36, region: '西南', product: '手机', sales_amount: 61000, quantity: 31, sale_date: '2024-05-13' },
-    
-    // 2024年6月数据
     { id: 37, region: '华东', product: '笔记本电脑', sales_amount: 178000, quantity: 36, sale_date: '2024-06-01' },
     { id: 38, region: '华东', product: '手机', sales_amount: 125000, quantity: 63, sale_date: '2024-06-05' },
     { id: 39, region: '华北', product: '笔记本电脑', sales_amount: 145000, quantity: 29, sale_date: '2024-06-02' },
@@ -209,6 +258,65 @@ function queryData(data, sql, params) {
   }
   
   return results;
+}
+
+async function initDB() {
+  const useMySQL = DB_TYPE === 'mysql' && MYSQL_HOST;
+  
+  if (useMySQL) {
+    console.log('使用 MySQL 数据库');
+    const pool = await initMySQL();
+    
+    return {
+      query: async (sql, params = {}) => {
+        const connection = await pool.getConnection();
+        try {
+          let formattedSql = sql;
+          if (params.region) {
+            formattedSql = formattedSql.replace('?', `'${params.region}'`);
+          }
+          if (params.product) {
+            formattedSql = formattedSql.replace('?', `'${params.product}'`);
+          }
+          if (params.startDate) {
+            formattedSql = formattedSql.replace('?', `'${params.startDate}'`);
+          }
+          if (params.endDate) {
+            formattedSql = formattedSql.replace('?', `'${params.endDate}'`);
+          }
+          
+          const [rows] = await connection.query(formattedSql);
+          return rows;
+        } catch (error) {
+          console.error('MySQL 查询失败:', error.message);
+          throw error;
+        } finally {
+          connection.release();
+        }
+      },
+      getAll: async () => {
+        const connection = await pool.getConnection();
+        try {
+          const [rows] = await connection.query('SELECT * FROM sales_data');
+          return rows;
+        } finally {
+          connection.release();
+        }
+      },
+      getCount: async () => {
+        const connection = await pool.getConnection();
+        try {
+          const [rows] = await connection.query('SELECT COUNT(*) as count FROM sales_data');
+          return rows[0].count;
+        } finally {
+          connection.release();
+        }
+      }
+    };
+  } else {
+    console.log('使用 JSON File 数据库');
+    return initJSON();
+  }
 }
 
 module.exports = { initDB };
