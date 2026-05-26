@@ -7,6 +7,10 @@ node_modules/
 # 数据文件（首次启动会自动生成）
 data.json
 data.db
+data/sales.json
+
+# 上传文件目录
+uploads/
 
 # 日志文件
 *.log

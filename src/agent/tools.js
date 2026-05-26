@@ -1,7 +1,5 @@
-// Agent 工具集定义
 const { v4: uuidv4 } = require('uuid');
 
-// 工具 Schema 定义
 const toolSchemas = {
   querySalesData: {
     name: 'querySalesData',
@@ -137,17 +135,14 @@ const toolSchemas = {
   }
 };
 
-// 工具实现
 class AgentTools {
   constructor(db) {
     this.db = db;
   }
   
-  // 查询销售数据
   async querySalesData(args) {
     let results = this.db.getAll();
     
-    // 应用筛选条件
     if (args.region) {
       results = results.filter(r => r.region === args.region);
     }
@@ -164,14 +159,13 @@ class AgentTools {
       results = results.filter(r => r.sale_date <= args.endDate);
     }
     
-    // 根据groupBy进行聚合
     if (args.groupBy !== 'none') {
       const aggregated = {};
       
       results.forEach(record => {
         let key;
         if (args.groupBy === 'month') {
-          key = record.sale_date.substring(0, 7); // YYYY-MM
+          key = record.sale_date.substring(0, 7);
         } else {
           key = record[args.groupBy];
         }
@@ -189,7 +183,6 @@ class AgentTools {
       
       results = Object.values(aggregated);
       
-      // 按月份排序
       if (args.groupBy === 'month') {
         results.sort((a, b) => a.month.localeCompare(b.month));
       }
@@ -202,7 +195,6 @@ class AgentTools {
     };
   }
   
-  // 生成图表配置
   async generateChartConfig(args) {
     const config = {
       id: uuidv4(),
@@ -219,7 +211,6 @@ class AgentTools {
     };
   }
   
-  // 计算统计信息
   async calculateStatistics(args) {
     const allData = this.db.getAll();
     
@@ -252,7 +243,6 @@ class AgentTools {
     };
   }
   
-  // 导出数据
   async exportData(args) {
     let results = this.db.getAll();
     
@@ -268,7 +258,6 @@ class AgentTools {
     };
   }
   
-  // 查询上传的数据集
   async queryUploadedData(args) {
     const { action, datasetId, filters, limit = 100 } = args;
     
@@ -279,7 +268,6 @@ class AgentTools {
       };
     }
     
-    // 列出所有数据集
     if (action === 'list') {
       const datasets = Object.values(global.uploadedDatasets).map(d => ({
         id: d.id,
@@ -294,7 +282,6 @@ class AgentTools {
       };
     }
     
-    // 查看数据集信息
     if (action === 'info') {
       if (!datasetId) {
         return {
@@ -311,7 +298,6 @@ class AgentTools {
         };
       }
       
-      // 计算基本统计
       const stats = {};
       dataset.columns.forEach(col => {
         const values = dataset.data.map(row => row[col]).filter(v => v != null && v !== '');
@@ -348,7 +334,6 @@ class AgentTools {
       };
     }
     
-    // 查询数据
     if (action === 'query') {
       if (!datasetId) {
         return {
@@ -367,7 +352,6 @@ class AgentTools {
       
       let results = dataset.data;
       
-      // 应用过滤
       if (filters) {
         results = results.filter(row => {
           for (const [key, value] of Object.entries(filters)) {
@@ -379,7 +363,6 @@ class AgentTools {
         });
       }
       
-      // 限制条数
       results = results.slice(0, limit);
       
       return {

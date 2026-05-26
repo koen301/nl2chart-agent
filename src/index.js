@@ -12,7 +12,7 @@ const { DataAgent } = require('./agent');
 const app = express();
 app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, '../public')));
 
 const API_KEY = process.env.API_KEY;
 const API_URL = process.env.API_URL;
@@ -26,7 +26,6 @@ async function startServer() {
   agent = new DataAgent(API_URL, API_KEY, LLM_MODEL, db);
 }
 
-// 定义 Function Calling 的 Schema
 const chartFunction = {
   name: 'renderChart',
   description: '根据用户自然语言描述，生成图表的配置',
@@ -57,7 +56,6 @@ const chartFunction = {
   }
 };
 
-// Agent 接口 - 新的智能数据分析接口
 app.post('/api/agent', async (req, res) => {
   const { userInput } = req.body;
   if (!userInput) {
@@ -73,28 +71,23 @@ app.post('/api/agent', async (req, res) => {
   }
 });
 
-// Agent 流式接口 (SSE)
 app.post('/api/agent/stream', async (req, res) => {
   const { userInput } = req.body;
   if (!userInput) {
     return res.status(400).json({ error: '缺少 userInput' });
   }
 
-  // 设置 SSE 响应头
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
   try {
-    // 使用流式执行方法
     for await (const chunk of agent.executeStream(userInput)) {
-      // 格式化 SSE 数据
       const eventData = `event: ${chunk.event}\ndata: ${JSON.stringify(chunk.data)}\n\n`;
       res.write(eventData);
     }
     
-    // 发送结束事件
     res.write('event: end\ndata: {"type": "end"}\n\n');
     res.end();
   } catch (error) {
@@ -105,9 +98,8 @@ app.post('/api/agent/stream', async (req, res) => {
   }
 });
 
-// 获取可用工具列表（用于前端展示）
 app.get('/api/tools', (req, res) => {
-  const { toolSchemas } = require('./agent-tools');
+  const { toolSchemas } = require('./agent/tools');
   res.json({
     success: true,
     tools: Object.keys(toolSchemas).map(name => ({
@@ -117,10 +109,9 @@ app.get('/api/tools', (req, res) => {
   });
 });
 
-// 获取数据库概览信息
-app.get('/api/data/overview', (req, res) => {
+app.get('/api/data/overview', async (req, res) => {
   try {
-    const allData = db.getAll();
+    const allData = await db.getAll();
     const regions = [...new Set(allData.map(r => r.region))];
     const products = [...new Set(allData.map(r => r.product))];
     const dates = allData.map(r => r.sale_date).sort();
@@ -147,6 +138,7 @@ app.post('/api/chart', async (req, res) => {
   }
 
   try {
+    const axios = require('axios');
     const response = await axios({
       method: 'post',
       url: API_URL,
@@ -168,7 +160,7 @@ app.post('/api/chart', async (req, res) => {
           type: 'function',
           function: chartFunction
         }],
-        tool_choice: { type: 'function', function: { name: 'renderChart' } },  // 强制调用函数
+        tool_choice: { type: 'function', function: { name: 'renderChart' } },
         temperature: 0.2
       }
     });
@@ -178,7 +170,6 @@ app.post('/api/chart', async (req, res) => {
       const chartConfig = JSON.parse(toolCalls[0].function.arguments);
       return res.json({ success: true, chartConfig });
     } else {
-      // 理论上不会走到这里（因为强制 tool_choice），但兜底
       return res.json({ success: false, message: '模型未返回图表配置，请换个说法重试。' });
     }
   } catch (error) {
@@ -187,10 +178,9 @@ app.post('/api/chart', async (req, res) => {
   }
 });
 
-// 配置 multer 用于文件上传
-const uploadDir = path.join(__dirname, 'uploads');
+const uploadDir = path.join(__dirname, '../uploads');
 if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir);
+  fs.mkdirSync(uploadDir, { recursive: true });
 }
 
 const storage = multer.diskStorage({
@@ -205,7 +195,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB 限制
+  limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowedExt = ['.csv', '.xlsx', '.xls'];
     const ext = path.extname(file.originalname).toLowerCase();
@@ -217,7 +207,6 @@ const upload = multer({
   }
 });
 
-// 解析文件内容
 function parseFile(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   let data = [];
@@ -247,7 +236,6 @@ function parseFile(filePath) {
   return { data, columns };
 }
 
-// 文件上传接口
 app.post('/api/upload', upload.single('file'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ success: false, error: '没有上传文件' });
@@ -257,13 +245,10 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
     const filePath = req.file.path;
     const { data, columns } = parseFile(filePath);
     
-    // 生成数据集ID
     const datasetId = req.file.filename;
     
-    // 清理上传的文件（保留数据在内存中）
     fs.unlinkSync(filePath);
     
-    // 将数据存储到全局对象中（生产环境应使用数据库）
     if (!global.uploadedDatasets) {
       global.uploadedDatasets = {};
     }
@@ -290,7 +275,6 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
   }
 });
 
-// 获取上传的数据集列表
 app.get('/api/datasets', (req, res) => {
   if (!global.uploadedDatasets) {
     return res.json({ success: true, datasets: [] });
@@ -307,7 +291,6 @@ app.get('/api/datasets', (req, res) => {
   res.json({ success: true, datasets });
 });
 
-// 查询上传的数据集
 app.post('/api/datasets/:id/query', (req, res) => {
   const { id } = req.params;
   const { query } = req.body;
@@ -318,7 +301,6 @@ app.post('/api/datasets/:id/query', (req, res) => {
   
   const dataset = global.uploadedDatasets[id];
   
-  // 简单查询：支持过滤字段
   let result = dataset.data;
   
   if (req.body.filters) {
@@ -342,7 +324,7 @@ app.post('/api/datasets/:id/query', (req, res) => {
   });
 });
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 startServer().then(() => {
   app.listen(PORT, () => {
     console.log(`后端服务运行在 http://localhost:${PORT}`);

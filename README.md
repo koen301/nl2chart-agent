@@ -137,19 +137,25 @@ node server.js
 
 ```
 nl2chart-agent/
-├── server.js              # Express 主服务器 & API 路由
-├── agent.js               # Agent 引擎 (ReAct 循环实现)
-├── agent-tools.js         # 工具集定义 & 实现
-├── db.js                  # 数据库模块 (支持 JSON File / MySQL)
-├── data.json              # JSON 数据库文件 (44条 Mock 数据)
-├── package.json           # 项目依赖配置
-├── .env.example           # 环境变量模板
-├── .gitignore             # Git 忽略配置
-│
-├── public/
-│   ├── index.html         # 前端交互界面
+├── src/                     # 源代码目录
+│   ├── index.js             # Express 主服务器 & API 路由
+│   ├── agent/               # Agent 模块
+│   │   ├── index.js         # Agent 入口
+│   │   ├── agent.js         # Agent 引擎 (ReAct 循环实现)
+│   │   └── tools.js         # 工具集定义 & 实现
+│   └── db/                  # 数据库模块
+│       ├── index.js         # 数据库入口
+│       └── db.js            # 数据库实现 (支持 JSON File / MySQL)
+├── data/                    # 数据目录
+│   └── sales.json           # JSON 数据库文件 (44条 Mock 数据)
+├── public/                  # 静态资源目录
+│   ├── index.html          # 前端交互界面
 │   └── lib/
-│       └── echarts.min.js # ECharts 图表库
+│       └── echarts.min.js  # ECharts 图表库
+├── uploads/                 # 上传文件目录 (运行时生成)
+├── package.json            # 项目依赖配置
+├── .env.example            # 环境变量模板
+├── .gitignore             # Git 忽略配置
 │
 └── docs/                  # 文档目录
     └── STREAMING.md       # 流式输出功能说明

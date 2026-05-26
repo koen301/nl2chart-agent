@@ -2,7 +2,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 
-const DB_PATH = path.join(__dirname, 'data.json');
+const DB_PATH = path.join(__dirname, '../../data/sales.json');
 
 const DB_TYPE = process.env.DB_TYPE || 'json';
 const MYSQL_HOST = process.env.MYSQL_HOST;
@@ -67,7 +67,6 @@ async function initMySQL() {
 function initJSON() {
   let data = loadData();
   
-  // 如果没有数据，插入 Mock 数据
   if (!data || !data.sales_data || data.sales_data.length === 0) {
     console.log('正在初始化 Mock 数据...');
     data = {
@@ -78,18 +77,14 @@ function initJSON() {
   }
   
   return {
-    // 查询方法
     query: (sql, params = {}) => {
       return queryData(data, sql, params);
     },
-    // 获取所有数据
     getAll: () => data.sales_data,
-    // 获取数据条数
     getCount: () => data.sales_data.length
   };
 }
 
-// 加载数据
 function loadData() {
   try {
     if (fs.existsSync(DB_PATH)) {
@@ -102,16 +97,18 @@ function loadData() {
   return null;
 }
 
-// 保存数据
 function saveData(data) {
   try {
+    const dir = path.dirname(DB_PATH);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
     fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2), 'utf-8');
   } catch (error) {
     console.error('保存数据失败:', error.message);
   }
 }
 
-// 生成 Mock 数据
 function generateMockData() {
   return [
     { id: 1, region: '华东', product: '笔记本电脑', sales_amount: 125000, quantity: 25, sale_date: '2024-01-15' },
@@ -161,11 +158,9 @@ function generateMockData() {
   ];
 }
 
-// 查询数据（简化版 SQL 解析）
 function queryData(data, sql, params) {
   let results = [...data.sales_data];
   
-  // 解析 WHERE 条件
   if (sql.includes('WHERE')) {
     const whereMatch = sql.match(/WHERE (.+?)(?:GROUP BY|ORDER BY|LIMIT|$)/i);
     if (whereMatch) {
@@ -189,7 +184,6 @@ function queryData(data, sql, params) {
     }
   }
   
-  // 处理 GROUP BY 聚合
   if (sql.includes('GROUP BY')) {
     const groupByMatch = sql.match(/GROUP BY (\w+)/i);
     if (groupByMatch) {
@@ -213,7 +207,6 @@ function queryData(data, sql, params) {
     }
   }
   
-  // 处理 ORDER BY
   if (sql.includes('ORDER BY')) {
     const orderByMatch = sql.match(/ORDER BY (\w+)(?: ASC| DESC)?/i);
     if (orderByMatch) {
@@ -226,7 +219,6 @@ function queryData(data, sql, params) {
     }
   }
   
-  // 处理聚合函数
   if (sql.includes('SUM(') || sql.includes('AVG(') || sql.includes('MAX(') || sql.includes('MIN(') || sql.includes('COUNT(')) {
     const sumMatch = sql.match(/(SUM|AVG|MAX|MIN|COUNT)\((\w+)\) as (\w+)/i);
     if (sumMatch) {

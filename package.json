@@ -2,10 +2,10 @@
   "name": "nl2chart-agent",
   "version": "1.0.0",
   "description": "基于 ReAct 架构的智能数据分析 Agent，支持自然语言驱动的数据可视化",
-  "main": "server.js",
+  "main": "src/index.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js",
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
