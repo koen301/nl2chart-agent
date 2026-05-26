@@ -1,4 +1,4 @@
-const { v4: uuidv4 } = require('uuid');
+import { v4 as uuidv4 } from 'uuid';
 
 const toolSchemas = {
   querySalesData: {
@@ -141,7 +141,12 @@ class AgentTools {
   }
   
   async querySalesData(args) {
-    let results = this.db.getAll();
+    let results;
+    if (typeof this.db.getAll === 'function') {
+      results = this.db.getAll();
+    } else {
+      results = await this.db.getAll();
+    }
     
     if (args.region) {
       results = results.filter(r => r.region === args.region);
@@ -212,7 +217,12 @@ class AgentTools {
   }
   
   async calculateStatistics(args) {
-    const allData = this.db.getAll();
+    let allData;
+    if (typeof this.db.getAll === 'function') {
+      allData = this.db.getAll();
+    } else {
+      allData = await this.db.getAll();
+    }
     
     let value;
     switch (args.operation) {
@@ -244,7 +254,12 @@ class AgentTools {
   }
   
   async exportData(args) {
-    let results = this.db.getAll();
+    let results;
+    if (typeof this.db.getAll === 'function') {
+      results = this.db.getAll();
+    } else {
+      results = await this.db.getAll();
+    }
     
     if (args.limit) {
       results = results.slice(0, args.limit);
@@ -385,4 +400,4 @@ class AgentTools {
   }
 }
 
-module.exports = { toolSchemas, AgentTools };
+export { toolSchemas, AgentTools };

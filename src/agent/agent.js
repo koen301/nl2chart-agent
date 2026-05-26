@@ -1,5 +1,5 @@
-const axios = require('axios');
-const { AgentTools } = require('./tools');
+import axios from 'axios';
+import { AgentTools } from './tools.js';
 
 class DataAgent {
   constructor(apiUrl, apiKey, model, db) {
@@ -41,7 +41,8 @@ class DataAgent {
       { role: 'user', content: userInput }
     ];
     
-    const tools = Object.values(require('./tools').toolSchemas).map(schema => ({
+    const toolsModule = await import('./tools.js');
+    const tools = Object.values(toolsModule.toolSchemas).map(schema => ({
       type: 'function',
       function: schema
     }));
@@ -147,7 +148,8 @@ class DataAgent {
       { role: 'user', content: userInput }
     ];
     
-    const tools = Object.values(require('./tools').toolSchemas).map(schema => ({
+    const toolsModule = await import('./tools.js');
+    const tools = Object.values(toolsModule.toolSchemas).map(schema => ({
       type: 'function',
       function: schema
     }));
@@ -328,4 +330,4 @@ class DataAgent {
   }
 }
 
-module.exports = { DataAgent };
+export { DataAgent };

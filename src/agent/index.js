@@ -1,3 +1,3 @@
-const { DataAgent } = require('./agent');
+import { DataAgent } from './agent.js';
 
-module.exports = { DataAgent };
+export { DataAgent };

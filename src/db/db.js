@@ -1,6 +1,10 @@
-require('dotenv').config();
-const fs = require('fs');
-const path = require('path');
+import 'dotenv/config';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const DB_PATH = path.join(__dirname, '../../data/sales.json');
 
@@ -14,9 +18,9 @@ const MYSQL_DATABASE = process.env.MYSQL_DATABASE || 'nl2chart';
 let mysqlPool = null;
 
 async function initMySQL() {
-  const mysql = require('mysql2/promise');
+  const mysql = await import('mysql2/promise');
   
-  mysqlPool = mysql.createPool({
+  mysqlPool = mysql.default.createPool({
     host: MYSQL_HOST,
     port: parseInt(MYSQL_PORT),
     user: MYSQL_USER,
@@ -311,4 +315,4 @@ async function initDB() {
   }
 }
 
-module.exports = { initDB };
+export { initDB };

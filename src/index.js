@@ -1,13 +1,17 @@
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
-const xlsx = require('xlsx');
-const { parse } = require('csv-parse/sync');
-const { initDB } = require('./db');
-const { DataAgent } = require('./agent');
+import 'dotenv/config';
+import express from 'express';
+import cors from 'cors';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+import xlsx from 'xlsx';
+import { parse } from 'csv-parse/sync';
+import { initDB } from './db/index.js';
+import { DataAgent } from './agent/index.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 app.use(cors());
@@ -98,8 +102,9 @@ app.post('/api/agent/stream', async (req, res) => {
   }
 });
 
-app.get('/api/tools', (req, res) => {
-  const { toolSchemas } = require('./agent/tools');
+app.get('/api/tools', async (req, res) => {
+  const toolsModule = await import('./agent/tools.js');
+  const { toolSchemas } = toolsModule;
   res.json({
     success: true,
     tools: Object.keys(toolSchemas).map(name => ({
@@ -111,7 +116,12 @@ app.get('/api/tools', (req, res) => {
 
 app.get('/api/data/overview', async (req, res) => {
   try {
-    const allData = await db.getAll();
+    let allData;
+    if (typeof db.getAll === 'function') {
+      allData = db.getAll();
+    } else {
+      allData = await db.getAll();
+    }
     const regions = [...new Set(allData.map(r => r.region))];
     const products = [...new Set(allData.map(r => r.product))];
     const dates = allData.map(r => r.sale_date).sort();
@@ -138,7 +148,7 @@ app.post('/api/chart', async (req, res) => {
   }
 
   try {
-    const axios = require('axios');
+    const axios = (await import('axios')).default;
     const response = await axios({
       method: 'post',
       url: API_URL,

@@ -1,3 +1,3 @@
-const { initDB } = require('./db');
+import { initDB } from './db.js';
 
-module.exports = { initDB };
+export { initDB };
