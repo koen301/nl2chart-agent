@@ -8,7 +8,9 @@ import { fileURLToPath } from 'url';
 import xlsx from 'xlsx';
 import { parse } from 'csv-parse/sync';
 import { initDB } from './db/index.js';
-import { DataAgent } from './agent/index.js';
+import { DataAgent, MultiAgent } from './agent/index.js';
+
+const USE_MULTI_AGENT = process.env.USE_MULTI_AGENT === 'true';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -27,7 +29,13 @@ let agent;
 
 async function startServer() {
   db = await initDB();
-  agent = new DataAgent(API_URL, API_KEY, LLM_MODEL, db);
+  if (USE_MULTI_AGENT) {
+    agent = new MultiAgent(API_URL, API_KEY, LLM_MODEL, db);
+    console.log('使用多 Agent 架构 (Planner + Executor + Reviewer)');
+  } else {
+    agent = new DataAgent(API_URL, API_KEY, LLM_MODEL, db);
+    console.log('使用单 Agent 架构');
+  }
 }
 
 const chartFunction = {
