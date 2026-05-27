@@ -37,14 +37,14 @@ const toolSchemas = {
   
   generateChartConfig: {
     name: 'generateChartConfig',
-    description: '根据查询结果生成图表配置，支持柱状图、折线图、饼图',
+    description: '根据查询结果生成图表配置，支持柱状图、折线图、饼图、散点图、雷达图、热力图、仪表盘。【雷达图数据准备】雷达图用于多维度对比分析，需要：1) 将各维度数据归一化到0-100范围(当前值/最大值*100)；2) labels为维度名称(如["销售额","销售量","华东占比"...])；3) values为二维数组，每个子数组是一个主体的归一化数据，如：values=[[100,85,60],[88,100,45],[36,21,30]]表示3个主体在各维度的归一化值',
     parameters: {
       type: 'object',
       properties: {
         type: {
           type: 'string',
-          enum: ['bar', 'line', 'pie'],
-          description: '图表类型：柱状图、折线图、饼图'
+          enum: ['bar', 'line', 'pie', 'doughnut', 'scatter', 'radar', 'heatmap', 'gauge'],
+          description: '图表类型：bar(柱状图)、line(折线图)、pie(饼图)、doughnut(环形图)、scatter(散点图)、radar(雷达图)、heatmap(热力图)、gauge(仪表盘)'
         },
         title: {
           type: 'string',
@@ -53,12 +53,34 @@ const toolSchemas = {
         labels: {
           type: 'array',
           items: { type: 'string' },
-          description: 'X轴或分类标签数组'
+          description: '分类标签数组，用于饼图、雷达图、仪表盘等'
         },
         values: {
           type: 'array',
-          items: { type: 'number' },
-          description: '对应的数值数组，长度与labels相同'
+          description: '对应的数值数组；热力图需要二维数组[[]]'
+        },
+        xLabel: {
+          type: 'string',
+          description: '散点图X轴名称，可选'
+        },
+        yLabel: {
+          type: 'string',
+          description: '散点图Y轴名称，可选'
+        },
+        xLabels: {
+          type: 'array',
+          items: { type: 'string' },
+          description: '热力图X轴标签数组，可选'
+        },
+        yLabels: {
+          type: 'array',
+          items: { type: 'string' },
+          description: '热力图Y轴标签数组，可选'
+        },
+        seriesNames: {
+          type: 'array',
+          items: { type: 'string' },
+          description: '多系列图表（如折线图多线）的系列名称数组，可选'
         }
       },
       required: ['type', 'title', 'labels', 'values']

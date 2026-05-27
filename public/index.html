@@ -774,7 +774,7 @@
         option.tooltip.formatter = '{b}: {c} ({d}%)';
         option.series.push({
           name: config.title,
-          type: chartType,
+          type: 'pie',
           data: config.labels.map((label, i) => ({
             name: label,
             value: config.values[i]
@@ -795,22 +795,24 @@
       }
       else if (chartType === 'radar') {
         option.tooltip = { trigger: 'item' };
+        const flatValues = config.values.flat();
         option.radar = {
-          indicator: config.labels.map(label => ({ name: label, max: Math.max(...config.values) * 1.2 })),
+          indicator: config.labels.map(label => ({ name: label, max: Math.max(...flatValues) * 1.2 })),
           shape: 'circle',
           splitNumber: 5,
           axisName: { color: '#666' }
         };
+        const radarData = Array.isArray(config.values[0]) 
+          ? config.values.map((v, i) => ({
+              value: v,
+              name: config.labels[i] || `系列${i + 1}`,
+              areaStyle: { opacity: 0.3 }
+            }))
+          : [{ value: config.values, name: config.title, areaStyle: { opacity: 0.3 } }];
         option.series.push({
           name: config.title,
           type: 'radar',
-          data: [{
-            value: config.values,
-            name: config.title,
-            areaStyle: { opacity: 0.3 }
-          }],
-          itemStyle: { color: colors[0] },
-          lineStyle: { width: 2 }
+          data: radarData
         });
       }
       else if (chartType === 'scatter') {
@@ -828,9 +830,8 @@
           name: config.title,
           type: 'scatter',
           symbolSize: 15,
-          data: config.values.map((y, i) => [i, y]),
+          data: config.values,
           itemStyle: {
-            color: colors[0],
             shadowBlur: 10,
             shadowColor: 'rgba(0,0,0,0.3)'
           }
@@ -908,27 +909,29 @@
           type: 'value',
           axisLabel: { fontSize: 12 }
         };
-        
+
         const isLine = chartType === 'line';
-        option.series.push({
-          name: config.title,
-          type: chartType,
-          data: config.values,
-          smooth: isLine,
-          areaStyle: isLine ? { opacity: 0.3 } : null,
-          itemStyle: {
-            color: function(params) {
-              return colors[params.dataIndex % colors.length];
-            }
-          },
-          label: {
-            show: chartType === 'bar',
-            position: 'top'
-          },
-          lineStyle: {
-            width: isLine ? 3 : 1
-          }
-        });
+        const seriesData = Array.isArray(config.values[0])
+          ? config.values.map((arr, i) => ({
+              name: config.seriesNames ? config.seriesNames[i] : `系列${i + 1}`,
+              type: chartType,
+              data: arr,
+              smooth: isLine,
+              areaStyle: isLine ? { opacity: 0.3 } : null,
+              itemStyle: { color: colors[i % colors.length] },
+              lineStyle: { width: isLine ? 3 : 1 }
+            }))
+          : [{
+              name: config.title,
+              type: chartType,
+              data: config.values,
+              smooth: isLine,
+              areaStyle: isLine ? { opacity: 0.3 } : null,
+              itemStyle: { color: function(params) { return colors[params.dataIndex % colors.length]; } },
+              label: { show: chartType === 'bar', position: 'top' },
+              lineStyle: { width: isLine ? 3 : 1 }
+            }];
+        option.series = seriesData;
       }
       
       chart.setOption(option, true);
