@@ -320,24 +320,23 @@ class AgentTools {
     }
     
     if (action === 'info') {
-      if (!datasetId) {
-        return {
-          success: false,
-          error: '请提供 datasetId'
-        };
+      let targetDataset = datasetId ? global.uploadedDatasets[datasetId] : null;
+      if (!targetDataset) {
+        const datasetKeys = Object.keys(global.uploadedDatasets);
+        if (datasetKeys.length === 1) {
+          targetDataset = global.uploadedDatasets[datasetKeys[0]];
+        }
       }
-      
-      const dataset = global.uploadedDatasets[datasetId];
-      if (!dataset) {
+      if (!targetDataset) {
         return {
           success: false,
-          error: '数据集不存在'
+          error: datasetId ? '数据集不存在' : '请提供 datasetId'
         };
       }
       
       const stats = {};
-      dataset.columns.forEach(col => {
-        const values = dataset.data.map(row => row[col]).filter(v => v != null && v !== '');
+      targetDataset.columns.forEach(col => {
+        const values = targetDataset.data.map(row => row[col]).filter(v => v != null && v !== '');
         if (values.length > 0) {
           const numericValues = values.map(v => parseFloat(v)).filter(v => !isNaN(v));
           if (numericValues.length > 0) {
@@ -358,36 +357,35 @@ class AgentTools {
           }
         }
       });
-      
+
       return {
         success: true,
         dataset: {
-          id: dataset.id,
-          name: dataset.name,
-          columns: dataset.columns,
-          rowCount: dataset.data.length,
+          id: targetDataset.id,
+          name: targetDataset.name,
+          columns: targetDataset.columns,
+          rowCount: targetDataset.data.length,
           stats
         }
       };
     }
-    
+
     if (action === 'query') {
-      if (!datasetId) {
+      let targetDataset = datasetId ? global.uploadedDatasets[datasetId] : null;
+      if (!targetDataset) {
+        const datasetKeys = Object.keys(global.uploadedDatasets);
+        if (datasetKeys.length === 1) {
+          targetDataset = global.uploadedDatasets[datasetKeys[0]];
+        }
+      }
+      if (!targetDataset) {
         return {
           success: false,
-          error: '请提供 datasetId'
+          error: datasetId ? '数据集不存在' : '请提供 datasetId'
         };
       }
-      
-      const dataset = global.uploadedDatasets[datasetId];
-      if (!dataset) {
-        return {
-          success: false,
-          error: '数据集不存在'
-        };
-      }
-      
-      let results = dataset.data;
+
+      let results = targetDataset.data;
       
       if (filters) {
         results = results.filter(row => {
@@ -405,12 +403,12 @@ class AgentTools {
       return {
         success: true,
         dataset: {
-          id: dataset.id,
-          name: dataset.name,
-          columns: dataset.columns
+          id: targetDataset.id,
+          name: targetDataset.name,
+          columns: targetDataset.columns
         },
         count: results.length,
-        total: dataset.data.length,
+        total: targetDataset.data.length,
         data: results
       };
     }
