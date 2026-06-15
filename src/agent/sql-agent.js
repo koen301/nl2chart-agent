@@ -1,13 +1,35 @@
 import axios from 'axios';
-import { createSqlEngine, schemaToText } from './sql-engine.js';
+import { createSqlEngine, getSchema, getSchemaSync, schemaToText } from './sql-engine.js';
 
 class SqlAgent {
   constructor(apiUrl, apiKey, model, db) {
     this.apiUrl = apiUrl;
     this.apiKey = apiKey;
     this.model = model;
+    this.db = db;
     this.sqlEngine = createSqlEngine(db);
     this.maxSteps = 5;
+    this.cachedSchema = null;
+  }
+
+  async resolveSchema() {
+    if (this.cachedSchema) return this.cachedSchema;
+
+    const pool = this.db && this.db._pool ? this.db._pool : null;
+    const datasets = (global.uploadedDatasets && Object.keys(global.uploadedDatasets).length > 0)
+      ? Object.values(global.uploadedDatasets)
+      : [];
+
+    try {
+      this.cachedSchema = await getSchema({ pool, datasets, preferDynamic: true });
+    } catch (e) {
+      this.cachedSchema = getSchemaSync({ datasets });
+    }
+    return this.cachedSchema;
+  }
+
+  refreshSchema() {
+    this.cachedSchema = null;
   }
 
   async callLLM(messages, tools = null, temperature = 0.2) {
@@ -32,14 +54,18 @@ class SqlAgent {
     return response.data.choices[0].message;
   }
 
-  buildSystemPrompt() {
+  async buildSystemPrompt() {
+    const schema = await this.resolveSchema();
+    const dbInfo = schema && schema.database ? `数据库: ${schema.database}` : '';
+    const tableNames = (schema && schema.tables || []).map(t => t.name).join(', ');
+
     return `你是一个 SQL 数据分析 Agent，根据用户的自然语言需求，生成 SQL 查询并执行。
 
-${schemaToText()}
+${schemaToText(schema)}
 
 工作流程：
 1. 理解用户的数据分析需求
-2. 生成对应的 SQL SELECT 语句
+2. 生成对应的 SQL SELECT 语句（表名: ${tableNames || '见上文'}）
 3. 调用 executeSql 工具执行 SQL
 4. 根据查询结果生成图表配置（generateChartConfig）
 5. 给用户返回分析结论

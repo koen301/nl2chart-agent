@@ -262,8 +262,10 @@ async function initDB() {
   if (useMySQL) {
     console.log('使用 MySQL 数据库');
     const pool = await initMySQL();
-    
+
     return {
+      _pool: pool,
+      _type: 'mysql',
       query: async (sql, params = {}) => {
         const connection = await pool.getConnection();
         try {

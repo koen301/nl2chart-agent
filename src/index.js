@@ -281,6 +281,10 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
       data,
       createdAt: new Date().toISOString()
     };
+
+    if (agent && typeof agent.refreshSchema === 'function') {
+      agent.refreshSchema();
+    }
     
     res.json({
       success: true,

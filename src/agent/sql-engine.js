@@ -395,7 +395,139 @@ function createSqlEngine(db) {
   return new JsonSqlEngine(db);
 }
 
-function getSchema() {
+async function getMySQLSchema(pool) {
+  if (!pool) return null;
+  try {
+    const [tables] = await pool.query(`
+      SELECT TABLE_NAME, TABLE_COMMENT
+      FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_TYPE = 'BASE TABLE'
+        AND TABLE_NAME NOT LIKE 'innodb%'
+    `);
+
+    if (tables.length === 0) return null;
+
+    const result = { database: pool.config ? pool.config.database : 'database', tables: [] };
+
+    for (const t of tables) {
+      const [columns] = await pool.query(`
+        SELECT COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_COMMENT, COLUMN_DEFAULT
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
+        ORDER BY ORDINAL_POSITION
+      `, [t.TABLE_NAME]);
+
+      const [distinctValues] = await pool.query(`
+        SELECT COLUMN_NAME
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
+          AND (DATA_TYPE = 'varchar' OR DATA_TYPE = 'enum')
+          AND CHARACTER_MAXIMUM_LENGTH <= 50
+      `, [t.TABLE_NAME]);
+
+      const enumCandidates = new Set(distinctValues.map(r => r.COLUMN_NAME.toLowerCase()));
+      const tableCols = [];
+
+      for (const col of columns) {
+        const colInfo = {
+          name: col.COLUMN_NAME,
+          type: col.COLUMN_TYPE.toUpperCase(),
+          nullable: col.IS_NULLABLE === 'YES',
+          description: col.COLUMN_COMMENT || ''
+        };
+        if (col.COLUMN_KEY === 'PRI') colInfo.primary = true;
+        if (col.COLUMN_DEFAULT !== null) colInfo.default = col.COLUMN_DEFAULT;
+
+        if (enumCandidates.has(col.COLUMN_NAME.toLowerCase()) && t.TABLE_COMMENT) {
+          try {
+            const [vals] = await pool.query(
+              `SELECT DISTINCT ?? FROM ?? LIMIT 20`,
+              [col.COLUMN_NAME, t.TABLE_NAME]
+            );
+            if (vals.length > 0 && vals.length <= 20) {
+              colInfo.enum = vals.map(v => Object.values(v)[0]).filter(v => v != null);
+            }
+          } catch (e) {
+            // ignore enum sampling errors
+          }
+        }
+
+        tableCols.push(colInfo);
+      }
+
+      result.tables.push({
+        name: t.TABLE_NAME,
+        description: t.TABLE_COMMENT || t.TABLE_NAME,
+        columns: tableCols
+      });
+    }
+
+    return result;
+  } catch (error) {
+    console.error('MySQL schema 获取失败:', error.message);
+    return null;
+  }
+}
+
+function getUploadedSchema(datasets = []) {
+  if (!datasets || datasets.length === 0) return null;
+
+  return {
+    database: 'uploaded',
+    tables: datasets.map(d => {
+      const sample = d.data && d.data.length > 0 ? d.data[0] : {};
+      const columns = (d.columns || []).map(col => {
+        const sampleVal = sample[col];
+        const type = inferTypeFromValue(sampleVal);
+        return {
+          name: col,
+          type,
+          description: `字段 ${col}`
+        };
+      });
+
+      return {
+        name: `uploaded_${d.id}`,
+        sourceId: d.id,
+        sourceName: d.name,
+        description: `上传文件: ${d.name}（${d.rowCount} 行）`,
+        columns,
+        rowCount: d.rowCount
+      };
+    })
+  };
+}
+
+function inferTypeFromValue(val) {
+  if (val === null || val === undefined) return 'TEXT';
+  if (typeof val === 'number') {
+    return Number.isInteger(val) ? 'INT' : 'DECIMAL(15,2)';
+  }
+  if (typeof val === 'boolean') return 'BOOLEAN';
+  if (val instanceof Date) return 'DATE';
+  if (/^\d{4}-\d{2}-\d{2}/.test(String(val))) return 'DATE';
+  return 'VARCHAR(255)';
+}
+
+function inferEnumFromValues(datasets) {
+  const enumMap = {};
+  for (const d of datasets) {
+    if (!d.data || d.data.length === 0) continue;
+    for (const col of d.columns || []) {
+      const unique = new Set();
+      for (const row of d.data.slice(0, 200)) {
+        if (row[col] != null) unique.add(row[col]);
+      }
+      if (unique.size > 0 && unique.size <= 20) {
+        enumMap[col] = Array.from(unique);
+      }
+    }
+  }
+  return enumMap;
+}
+
+function getStaticSchema() {
   return {
     database: 'nl2chart',
     tables: [
@@ -416,20 +548,25 @@ function getSchema() {
   };
 }
 
-function schemaToText() {
-  const schema = getSchema();
+function buildSchemaText(schema) {
+  if (!schema) return '\n## 数据库 Schema\n（暂无可用数据）\n';
+
   let text = `\n## 数据库 Schema\n`;
   text += `数据库: ${schema.database}\n\n`;
 
   schema.tables.forEach(table => {
     text += `### 表: ${table.name}\n`;
-    text += `${table.description}\n\n`;
+    text += `${table.description || ''}\n\n`;
     text += `| 字段 | 类型 | 说明 |\n`;
     text += `|------|------|------|\n`;
     table.columns.forEach(col => {
-      const enumInfo = col.enum ? ` (可选: ${col.enum.join('/')})` : '';
-      text += `| ${col.name} | ${col.type}${enumInfo} | ${col.description} |\n`;
+      let extra = '';
+      if (col.primary) extra += ' [主键]';
+      if (col.enum && col.enum.length > 0) extra += ` (可选: ${col.enum.join('/')})`;
+      const nullable = col.nullable ? ' (可空)' : '';
+      text += `| ${col.name} | ${col.type}${nullable} | ${col.description || ''}${extra} |\n`;
     });
+    if (table.rowCount) text += `\n总行数: ${table.rowCount}\n`;
     text += `\n`;
   });
 
@@ -443,4 +580,40 @@ function schemaToText() {
   return text;
 }
 
-export { SqlSafetyFilter, JsonSqlEngine, MySqlEngine, createSqlEngine, getSchema, schemaToText };
+async function getSchema({ pool = null, datasets = [], preferDynamic = true } = {}) {
+  if (preferDynamic) {
+    if (pool) {
+      const mysqlSchema = await getMySQLSchema(pool);
+      if (mysqlSchema) {
+        if (datasets && datasets.length > 0) {
+          const uploadedSchema = getUploadedSchema(datasets);
+          if (uploadedSchema) {
+            mysqlSchema.tables = mysqlSchema.tables.concat(uploadedSchema.tables);
+          }
+        }
+        return mysqlSchema;
+      }
+    }
+
+    if (datasets && datasets.length > 0) {
+      const uploadedSchema = getUploadedSchema(datasets);
+      if (uploadedSchema) return uploadedSchema;
+    }
+  }
+
+  return getStaticSchema();
+}
+
+function getSchemaSync({ datasets = [] } = {}) {
+  if (datasets && datasets.length > 0) {
+    const uploadedSchema = getUploadedSchema(datasets);
+    if (uploadedSchema) return uploadedSchema;
+  }
+  return getStaticSchema();
+}
+
+function schemaToText(schema) {
+  return buildSchemaText(schema);
+}
+
+export { SqlSafetyFilter, JsonSqlEngine, MySqlEngine, createSqlEngine, getSchema, getSchemaSync, schemaToText, getStaticSchema, getMySQLSchema, getUploadedSchema, buildSchemaText };
