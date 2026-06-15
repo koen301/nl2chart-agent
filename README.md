@@ -35,6 +35,7 @@
 - **🌊 流式输出**: 使用 Server-Sent Events (SSE) 实时展示 Agent 思考过程
 - **📁 文件上传**: 支持 Excel/CSV 文件导入，自主分析上传数据
 - **🤖 多 Agent 协作**（可选）: Planner + Executor + Reviewer 架构，避免单 Agent 盲目执行问题
+- **🛡️ SQL Agent 模式**（可选）: LLM 自动生成 SQL + Schema 注入 + 安全过滤
 
 ---
 
@@ -117,6 +118,10 @@ LLM_MODEL=gpt-3.5-turbo
 # 多 Agent 架构 (可选，默认单 Agent)
 # USE_MULTI_AGENT=true  # 启用 Planner + Executor + Reviewer 多 Agent 协作
 # USE_MULTI_AGENT=false # 使用单 Agent 架构 (默认)
+
+# SQL Agent 模式 (可选)
+# USE_SQL_AGENT=true   # 启用 SQL Agent (LLM 生成 SQL + 安全过滤)
+# USE_SQL_AGENT=false  # 不使用 (默认)
 
 # 数据库配置 (可选)
 # DB_TYPE=json    # 默认使用 JSON File，无需配置
@@ -209,7 +214,26 @@ for (let step = 0; step < maxSteps; step++) {
 - **Executor**: 根据计划调用具体工具
 - **Reviewer**: 审查执行结果，判断是否继续或终止
 
-#### 3. 工具系统 (`tools.js`)
+#### 3. SQL Agent 架构 (`sql-agent.js`)
+
+启用 `USE_SQL_AGENT=true` 后使用，LLM 自动生成 SQL，专门的 SQL 引擎执行：
+
+```
+用户输入 → LLM 推理 → 生成 SQL → 安全过滤 → 执行查询 → 生成图表
+```
+
+**核心特性：**
+- **Schema 注入**: 自动注入数据库表结构，LLM 知道有哪些字段
+- **安全过滤**:
+  - 禁止 DROP/DELETE/UPDATE/INSERT 等修改操作
+  - 禁止访问系统表（mysql/information_schema 等）
+  - 限制 SQL 长度（2000 字符）
+- **执行引擎**:
+  - JSON 模式: 使用 `node-sql-parser` 解析 AST，在内存中执行
+  - MySQL 模式: 直接执行 SQL（仍然应用安全过滤）
+- **支持完整 SQL 语法**: WHERE、GROUP BY、HAVING、ORDER BY、LIMIT、聚合函数
+
+#### 4. 工具系统 (`tools.js`)
 
 | 工具名称 | 功能描述 | 输入参数 | 输出 |
 |---------|---------|---------|------|
@@ -219,7 +243,7 @@ for (let step = 0; step < maxSteps; step++) {
 | **generateChartConfig** | 生成图表配置 | type, title, labels, values | 图表配置对象 |
 | **exportData** | 导出数据 | format, limit | 导出数据 |
 
-#### 4. 数据层 (`db.js`)
+#### 5. 数据层 (`db.js`)
 
 - 支持 **JSON File**（默认）和 **MySQL** 两种数据库
 - JSON File 模式：零配置即用，适合开发和演示
@@ -376,6 +400,8 @@ for (let step = 0; step < maxSteps; step++) {
 
 ## 🔮 未来规划
 
+- [x] **多 Agent 协作**: Planner + Executor + Reviewer 架构
+- [x] **SQL Agent 模式**: LLM 生成 SQL + Schema 注入 + 安全过滤
 - [ ] **评估框架**: 自动化工具选择准确率测试
 - [ ] **用户认证**: 支持多用户会话管理
 - [ ] **部署优化**: Docker 容器化 + 云平台部署
