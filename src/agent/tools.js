@@ -1,3 +1,15 @@
+/**
+ * Agent 工具集（tools）
+ *
+ * 职责：
+ * - 定义 Agent 可用的工具 schema + 实现
+ * - 是 Agent 与外部系统（数据/网关）的唯一桥梁
+ *
+ * 与 SQL 网关的关系：
+ * - querySalesData 内部走 HTTP 调网关 POST /api/sql/query
+ * - Agent 不直接连 DB；安全过滤、限行都在网关
+ */
+
 import { v4 as uuidv4 } from 'uuid';
 
 const toolSchemas = {
@@ -37,7 +49,7 @@ const toolSchemas = {
   
   generateChartConfig: {
     name: 'generateChartConfig',
-    description: '根据查询结果生成图表配置，支持柱状图、折线图、饼图、散点图、雷达图、热力图、仪表盘。【雷达图数据准备】雷达图用于多维度对比分析，需要：1) 将各维度数据归一化到0-100范围(当前值/最大值*100)；2) labels为维度名称(如["销售额","销售量","华东占比"...])；3) values为二维数组，每个子数组是一个主体的归一化数据，如：values=[[100,85,60],[88,100,45],[36,21,30]]表示3个主体在各维度的归一化值',
+    description: '根据查询结果生成图表配置，支持柱状图、折线图、饼图、散点图、雷达图、热力图、仪表盘。重要：调用此工具前必须先用 querySalesData/queryUploadedData/calculateStatistics 获取实际数据，并把数据中的数值字段填入 values 数组（例如：查到了 [{product:"笔记本",total_sales:904000},{product:"手机",total_sales:634000}]，则 values 应为 [904000, 634000]，labels 为 ["笔记本","手机"]）。values 不能为空数组。【雷达图数据准备】雷达图用于多维度对比分析，需要：1) 将各维度数据归一化到0-100范围(当前值/最大值*100)；2) labels为维度名称(如["销售额","销售量","华东占比"...]);3) values为二维数组，每个子数组是一个主体的归一化数据，如：values=[[100,85,60],[88,100,45],[36,21,30]]表示3个主体在各维度的归一化值',
     parameters: {
       type: 'object',
       properties: {
@@ -214,7 +226,9 @@ class AgentTools {
         results.sort((a, b) => a.month.localeCompare(b.month));
       }
     }
-    
+
+    global.recentQueryResult = { source: 'querySalesData', args, data: results };
+
     return {
       success: true,
       count: results.length,
@@ -223,15 +237,64 @@ class AgentTools {
   }
   
   async generateChartConfig(args) {
+    // 兜底：如果 LLM 传入空 values，自动从最近的工具返回中提取数据
+    let values = args.values;
+    let labels = args.labels;
+    let valueField = null;
+
+    if (!values || (Array.isArray(values) && values.length === 0)) {
+      const recentData = global.recentQueryResult;
+      if (recentData && recentData.data && recentData.data.length > 0) {
+        const sample = recentData.data[0];
+        const numericFields = Object.keys(sample).filter(k =>
+          typeof sample[k] === 'number' ||
+          (typeof sample[k] === 'string' && /^\d+(\.\d+)?$/.test(sample[k]))
+        );
+        const excludeFields = ['id', 'index', 'rowNumber'];
+        const availableFields = numericFields.filter(f => !excludeFields.includes(f));
+        const preferredFields = availableFields.filter(f => /sales|amount|total|sum|value|price|count|quantity/i.test(f));
+
+        if (preferredFields.length > 0) {
+          valueField = preferredFields[0];
+        } else if (availableFields.length > 0) {
+          valueField = availableFields[0];
+        }
+
+        if (valueField) {
+          values = recentData.data.map(r => Number(r[valueField]) || 0);
+
+          if (!labels || labels.length === 0) {
+            const labelField = Object.keys(sample).find(k =>
+              k !== valueField && typeof sample[k] === 'string'
+            );
+            if (labelField) {
+              labels = recentData.data.map(r => r[labelField]);
+            } else {
+              labels = recentData.data.map((_, i) => `类别${i + 1}`);
+            }
+          }
+
+          console.log(`[generateChartConfig] 兜底: 自动从查询结果提取 ${values.length} 个值 (字段: ${valueField})`);
+        }
+      }
+    }
+
+    if (!values || (Array.isArray(values) && values.length === 0)) {
+      return {
+        success: false,
+        error: 'values 不能为空，请先调用 querySalesData/queryUploadedData/calculateStatistics 获取数据'
+      };
+    }
+
     const config = {
       id: uuidv4(),
       type: args.type,
       title: args.title,
-      labels: args.labels,
-      values: args.values,
+      labels: labels,
+      values: values,
       createdAt: new Date().toISOString()
     };
-    
+
     return {
       success: true,
       config
@@ -267,6 +330,12 @@ class AgentTools {
         return { success: false, error: '不支持的统计操作' };
     }
     
+    global.recentQueryResult = {
+      source: 'calculateStatistics',
+      args,
+      data: [{ [args.metric]: value, _label: `${args.operation}_${args.metric}` }]
+    };
+
     return {
       success: true,
       metric: args.metric,
@@ -412,6 +481,8 @@ class AgentTools {
         data: results
       };
     }
+
+    global.recentQueryResult = null;
     
     return {
       success: false,

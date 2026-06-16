@@ -1,3 +1,15 @@
+/**
+ * Multi Agent（多 Agent 协作模式）
+ *
+ * 职责：
+ * - 三 Agent 协作：Planner（规划）→ Executor（执行）→ Reviewer（审校）
+ * - 每一步由独立 LLM 调用完成，pipeline 化
+ *
+ * 与 SQL 网关的关系：
+ * - Executor 通过 AgentTools 调网关（POST /api/sql/query）执行数据访问
+ * - Planner/Reviewer 不直接连 DB
+ */
+
 import axios from 'axios';
 import { AgentTools } from './tools.js';
 

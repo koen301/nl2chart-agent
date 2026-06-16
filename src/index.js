@@ -8,9 +8,10 @@ import { fileURLToPath } from 'url';
 import xlsx from 'xlsx';
 import { parse } from 'csv-parse/sync';
 import { initDB } from './db/index.js';
-import { DataAgent, MultiAgent } from './agent/index.js';
+import { DataAgent, MultiAgent, SqlAgent } from './agent/index.js';
 
 const USE_MULTI_AGENT = process.env.USE_MULTI_AGENT === 'true';
+const USE_SQL_AGENT = process.env.USE_SQL_AGENT === 'true';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,13 +30,21 @@ let agent;
 
 async function startServer() {
   db = await initDB();
-  if (USE_MULTI_AGENT) {
+  if (USE_SQL_AGENT) {
+    agent = new SqlAgent(API_URL, API_KEY, LLM_MODEL, db);
+    console.log('使用 SQL Agent 模式 (LLM 生成 SQL + 安全过滤)');
+  } else if (USE_MULTI_AGENT) {
     agent = new MultiAgent(API_URL, API_KEY, LLM_MODEL, db);
     console.log('使用多 Agent 架构 (Planner + Executor + Reviewer)');
   } else {
     agent = new DataAgent(API_URL, API_KEY, LLM_MODEL, db);
     console.log('使用单 Agent 架构');
   }
+
+  // SQL 网关路由注入（演示项目同进程部署）
+  // 未来独立部署：把此调用挂到独立 Express 实例
+  const { registerGatewayRoutes } = await import('./gateway/routes.js');
+  registerGatewayRoutes(app, db);
 }
 
 const chartFunction = {
@@ -121,6 +130,8 @@ app.get('/api/tools', async (req, res) => {
     }))
   });
 });
+
+// SQL 网关路由已在 startServer() 内部注入（演示项目同进程部署）
 
 app.get('/api/data/overview', async (req, res) => {
   try {
@@ -277,6 +288,10 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
       data,
       createdAt: new Date().toISOString()
     };
+
+    if (agent && typeof agent.refreshSchema === 'function') {
+      agent.refreshSchema();
+    }
     
     res.json({
       success: true,

@@ -1,3 +1,16 @@
+/**
+ * Data Agent（单 Agent 模式）
+ *
+ * 职责：
+ * - 单 LLM 循环：理解需求 → 选用工具 → 执行 → 总结
+ * - 通过 AgentTools 间接访问数据/网关
+ *
+ * 与 SQL 网关的关系：
+ * - 本 Agent 不直接生成/执行 SQL
+ * - 数据通道走 AgentTools → SQL 网关（POST /api/sql/query）
+ * - 与 sql-agent.js（直生 SQL）职责分开
+ */
+
 import axios from 'axios';
 import { AgentTools } from './tools.js';
 
