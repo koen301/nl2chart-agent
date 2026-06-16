@@ -1,25 +1,60 @@
+/**
+ * SQL Agent（单 Agent 模式）
+ *
+ * 职责：
+ * - 单 LLM 循环：理解需求 → 生成 SQL → 调工具执行 → 总结
+ * - 默认通过 HTTP 调用 SQL 网关执行查询与获取 schema
+ *
+ * 与 SQL 网关的关系：
+ * - Agent 不直接连 DB，所有数据访问（含元数据）都走 HTTP 调网关
+ * - SQL 执行  → POST /api/sql/query
+ * - Schema 获取 → GET  /api/sql/schema
+ * - 这样网关才是"唯一安全边界"和"唯一数据通道"，便于未来独立部署
+ */
+
 import axios from 'axios';
-import { createSqlEngine, getSchema, getSchemaSync, schemaToText } from './sql-engine.js';
+import { createEngine } from '../engines/index.js';
 
 class SqlAgent {
-  constructor(apiUrl, apiKey, model, db) {
+  constructor(apiUrl, apiKey, model, db, gatewayConfig = {}) {
     this.apiUrl = apiUrl;
     this.apiKey = apiKey;
     this.model = model;
     this.db = db;
-    this.sqlEngine = createSqlEngine(db);
+    this.sqlEngine = createEngine(db);
+    const base = gatewayConfig.gatewayUrl || `http://127.0.0.1:${process.env.PORT || 3000}`;
+    this.gatewayQueryUrl = `${base}/api/sql/query`;
+    this.gatewaySchemaUrl = `${base}/api/sql/schema`;
+    this.gatewayEnabled = gatewayConfig.gatewayEnabled !== false;
     this.maxSteps = 5;
     this.cachedSchema = null;
   }
 
+  /**
+   * 统一走网关拿 schema（元数据通道）
+   * 网关会内部决定是走 MySQL information_schema，还是上传数据集，还是静态
+   */
   async resolveSchema() {
     if (this.cachedSchema) return this.cachedSchema;
 
-    const pool = this.db && this.db._pool ? this.db._pool : null;
+    if (this.gatewayEnabled) {
+      try {
+        const res = await axios.get(this.gatewaySchemaUrl, { timeout: 10000 });
+        if (res.data && res.data.success) {
+          this.cachedSchema = res.data.schema;
+          return this.cachedSchema;
+        }
+      } catch (e) {
+        console.warn('[SqlAgent] 网关获取 schema 失败，回退本地:', e.message);
+      }
+    }
+
+    // 兜底：直接本地拿（仅当网关不可用时）
+    const { getSchema, getSchemaSync } = await import('../engines/json-engine.js');
+    const pool = this.db && this.db.pool ? this.db.pool : null;
     const datasets = (global.uploadedDatasets && Object.keys(global.uploadedDatasets).length > 0)
       ? Object.values(global.uploadedDatasets)
       : [];
-
     try {
       this.cachedSchema = await getSchema({ pool, datasets, preferDynamic: true });
     } catch (e) {
@@ -56,12 +91,31 @@ class SqlAgent {
 
   async buildSystemPrompt() {
     const schema = await this.resolveSchema();
+
+    // 网关返回的 schema 已经是结构化的（{database, tables}），
+    // 直接交给网关的 schemaToText 走 text 通道；或者本地 fallback 时再调用 schemaToText
+    let schemaText = '';
+    if (this.gatewayEnabled) {
+      try {
+        const res = await axios.get(`${this.gatewaySchemaUrl}?format=text`, { timeout: 10000 });
+        if (res.data && res.data.success) {
+          schemaText = res.data.text || '';
+        }
+      } catch (e) {
+        // 忽略，下面用 schema 对象本地渲染
+      }
+    }
+    if (!schemaText) {
+      const { schemaToText } = await import('../engines/json-engine.js');
+      schemaText = schemaToText(schema);
+    }
+
     const dbInfo = schema && schema.database ? `数据库: ${schema.database}` : '';
     const tableNames = (schema && schema.tables || []).map(t => t.name).join(', ');
 
     return `你是一个 SQL 数据分析 Agent，根据用户的自然语言需求，生成 SQL 查询并执行。
 
-${schemaToText(schema)}
+${schemaText}
 
 工作流程：
 1. 理解用户的数据分析需求
@@ -195,7 +249,7 @@ SQL 生成规则：
 
           let result;
           if (toolName === 'executeSql') {
-            result = await this.sqlEngine.execute(args.sql);
+            result = await this.executeSqlViaGateway(args);
           } else if (toolName === 'generateChartConfig') {
             const { v4: uuidv4 } = await import('uuid');
             const config = { id: uuidv4(), ...args, createdAt: new Date().toISOString() };
@@ -241,6 +295,41 @@ SQL 生成规则：
       event: 'complete',
       data: { type: 'max_steps_reached', content: '已达最大执行步数', chartConfig }
     };
+  }
+
+  async executeSqlViaGateway(args) {
+    if (!this.gatewayEnabled) {
+      return await this.sqlEngine.execute(args.sql);
+    }
+
+    try {
+      const response = await axios.post(
+        this.gatewayQueryUrl,
+        { sql: args.sql, maxRows: args.maxRows },
+        { timeout: 15000, validateStatus: () => true }
+      );
+
+      if (response.status === 200 && response.data && response.data.success !== false) {
+        return {
+          success: true,
+          data: response.data.data || [],
+          count: response.data.count,
+          truncated: response.data.truncated,
+          duration: response.data.duration,
+          viaGateway: true
+        };
+      }
+
+      return {
+        success: false,
+        error: response.data?.error || `网关返回 ${response.status}`,
+        reason: response.data?.reason,
+        code: response.data?.code
+      };
+    } catch (error) {
+      console.warn(`[SQL Gateway] 调用失败，回退到本地引擎: ${error.message}`);
+      return await this.sqlEngine.execute(args.sql);
+    }
   }
 
   summarizeResult(result) {

@@ -1,3 +1,24 @@
+/**
+ * 数据库初始化（DB 模块）
+ *
+ * 职责：
+ * - 根据环境变量 DB_TYPE 选择数据源：'mysql' | 'json'
+ * - 暴露统一接口给上层（gateway / engines / agent）：
+ *     { type, pool, query, getAll, getCount, close }
+ *
+ * 与其他模块的关系：
+ * - src/engines/index.js  → 通过 db.type 决定用 MySqlEngine 还是 JsonEngine
+ * - src/engines/json-engine.js → 用 db.getAll() / db.query() 在内存数据上模拟执行
+ * - src/engines/mysql-engine.js → 用 db.pool 直连 MySQL
+ * - src/gateway/sql-gateway.js → 通过 db.getSchema() 决定 schema 来源
+ * - 业务路由（src/index.js）→ 调 db.getAll() / db.getCount() 概览
+ *
+ * 设计原则：
+ * - db 只负责"取数据和连 DB"，不做安全过滤、不做 SQL 校验
+ * - 安全过滤是 src/gateway/safety-filter.js 的唯一职责
+ * - 不要在 db 层加新业务逻辑；要扩展就在 engines/ 或 gateway/ 加
+ */
+
 import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
@@ -81,11 +102,13 @@ function initJSON() {
   }
   
   return {
+    type: 'json',
     query: (sql, params = {}) => {
       return queryData(data, sql, params);
     },
     getAll: () => data.sales_data,
-    getCount: () => data.sales_data.length
+    getCount: () => data.sales_data.length,
+    close: async () => {}
   };
 }
 
@@ -258,14 +281,14 @@ function queryData(data, sql, params) {
 
 async function initDB() {
   const useMySQL = DB_TYPE === 'mysql' && MYSQL_HOST;
-  
+
   if (useMySQL) {
     console.log('使用 MySQL 数据库');
     const pool = await initMySQL();
 
     return {
-      _pool: pool,
-      _type: 'mysql',
+      type: 'mysql',
+      pool,
       query: async (sql, params = {}) => {
         const connection = await pool.getConnection();
         try {
@@ -282,7 +305,7 @@ async function initDB() {
           if (params.endDate) {
             formattedSql = formattedSql.replace('?', `'${params.endDate}'`);
           }
-          
+
           const [rows] = await connection.query(formattedSql);
           return rows;
         } catch (error) {
@@ -309,6 +332,9 @@ async function initDB() {
         } finally {
           connection.release();
         }
+      },
+      close: async () => {
+        try { await pool.end(); } catch (_) {}
       }
     };
   } else {

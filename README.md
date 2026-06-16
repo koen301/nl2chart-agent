@@ -35,7 +35,8 @@
 - **🌊 流式输出**: 使用 Server-Sent Events (SSE) 实时展示 Agent 思考过程
 - **📁 文件上传**: 支持 Excel/CSV 文件导入，自主分析上传数据
 - **🤖 多 Agent 协作**（可选）: Planner + Executor + Reviewer 架构，避免单 Agent 盲目执行问题
-- **🛡️ SQL Agent 模式**（可选）: LLM 自动生成 SQL + Schema 注入 + 安全过滤
+- **🛡️ SQL Agent 模式**（可选）: LLM 自动生成 SQL + Schema 注入 + 网关安全过滤
+- **🚧 SQL 网关**: 独立网关层（可拆分为独立服务），集中处理 SQL 安全校验、行数限制
 
 ---
 
@@ -63,7 +64,7 @@ Agent: "已为您生成华东地区产品销售总额的柱状图。其中笔记
 | **地区** | 华东、华北、华南、西南 |
 | **产品** | 笔记本电脑、手机、平板电脑 |
 | **时间** | 2024年1月 - 2024年6月 |
-| **图表类型** | 柱状图、折线图、饼图、散点图、雷达图、热力图、仪表盘 |
+| **图表类型** | 柱状图、折线图、饼图、环形图、散点图、雷达图、热力图、仪表盘 |
 
 ---
 
@@ -136,7 +137,9 @@ LLM_MODEL=gpt-3.5-turbo
 #### 4. 启动服务
 
 ```bash
-node server.js
+pnpm start
+# 或
+node src/index.js
 ```
 
 服务启动后，访问: http://localhost:3000
@@ -148,27 +151,37 @@ node server.js
 ```
 nl2chart-agent/
 ├── src/                     # 源代码目录
-│   ├── index.js             # Express 主服务器 & API 路由
+│   ├── index.js             # Express 主服务器 & API 路由（含网关路由注入）
 │   ├── agent/               # Agent 模块
-│   │   ├── index.js         # Agent 入口
-│   │   ├── agent.js         # Agent 引擎 (ReAct 循环实现)
+│   │   ├── index.js         # Agent 入口 (根据环境变量选择模式)
+│   │   ├── agent.js         # 单 Agent 引擎 (ReAct 循环)
+│   │   ├── multi-agent.js   # 多 Agent 引擎 (Planner + Executor + Reviewer)
+│   │   ├── sql-agent.js     # SQL Agent 引擎 (LLM 生成 SQL，过 HTTP 调网关)
 │   │   └── tools.js         # 工具集定义 & 实现
+│   ├── engines/             # 执行引擎（按数据源拆分）
+│   │   ├── index.js         # 工厂：按 db.type 自动选择引擎
+│   │   ├── mysql-engine.js  # MySQL 引擎：直连 DB，无 SQL 解析
+│   │   └── json-engine.js   # JSON 引擎：node-sql-parser + 内存模拟执行
+│   ├── gateway/             # SQL 网关（独立模块，可拆分部署）
+│   │   ├── safety-filter.js # 网关唯一安全边界（黑名单 + 长度限制 + 系统表拦截）
+│   │   ├── sql-gateway.js   # 网关核心：校验 → 委托引擎 → 限行
+│   │   ├── routes.js        # HTTP 路由：/api/sql/query, /api/sql/schema
+│   │   └── standalone.js    # 独立服务启动入口（生产用）
 │   └── db/                  # 数据库模块
 │       ├── index.js         # 数据库入口
-│       └── db.js            # 数据库实现 (支持 JSON File / MySQL)
+│       └── db.js            # 数据库实现 (JSON File / MySQL)
 ├── data/                    # 数据目录
-│   └── sales.json           # JSON 数据库文件 (44条 Mock 数据)
+│   └── sales.json           # JSON 数据库文件 (44 条 Mock 数据)
 ├── public/                  # 静态资源目录
-│   ├── index.html          # 前端交互界面
+│   ├── index.html           # 前端交互界面 (含 ECharts 渲染)
 │   └── lib/
-│       └── echarts.min.js  # ECharts 图表库
+│       └── echarts.min.js   # ECharts 图表库
 ├── uploads/                 # 上传文件目录 (运行时生成)
-├── package.json            # 项目依赖配置
-├── .env.example            # 环境变量模板
-├── .gitignore             # Git 忽略配置
-│
-└── docs/                  # 文档目录
-    └── STREAMING.md       # 流式输出功能说明
+├── docs/                    # 文档目录
+│   └── STREAMING.md         # 流式输出功能说明
+├── package.json             # 项目依赖配置
+├── .env.example             # 环境变量模板
+└── .gitignore               # Git 忽略配置
 ```
 
 ---
@@ -216,34 +229,68 @@ for (let step = 0; step < maxSteps; step++) {
 
 #### 3. SQL Agent 架构 (`sql-agent.js`)
 
-启用 `USE_SQL_AGENT=true` 后使用，LLM 自动生成 SQL，专门的 SQL 引擎执行：
+启用 `USE_SQL_AGENT=true` 后使用，LLM 自动生成 SQL，通过 HTTP 走 SQL 网关执行：
 
 ```
-用户输入 → LLM 推理 → 生成 SQL → 安全过滤 → 执行查询 → 生成图表
+用户输入 → LLM 推理 → 生成 SQL → POST /api/sql/query（网关）→ 安全过滤 → 执行 → 生成图表
 ```
 
 **核心特性：**
-- **Schema 注入**: 自动注入数据库表结构，LLM 知道有哪些字段
-- **安全过滤**:
+- **Schema 注入**: 通过 `GET /api/sql/schema` 自动注入数据库表结构，LLM 知道有哪些字段
+- **安全过滤**（集中在网关 `safety-filter.js`，agent 层不重复）：
   - 禁止 DROP/DELETE/UPDATE/INSERT 等修改操作
   - 禁止访问系统表（mysql/information_schema 等）
   - 限制 SQL 长度（2000 字符）
-- **执行引擎**:
-  - JSON 模式: 使用 `node-sql-parser` 解析 AST，在内存中执行
-  - MySQL 模式: 直接执行 SQL（仍然应用安全过滤）
+- **执行引擎**（按数据源自动选择）：
+  - **JSON 模式**: 走 `JsonEngine`，使用 `node-sql-parser` 解析 AST，在内存中执行
+  - **MySQL 模式**: 走 `MySqlEngine`，**不解析 SQL**，直接交给 DB 执行
+- **行数限制**: 网关自动追加 `LIMIT N`，防止返回大量数据影响 LLM
 - **支持完整 SQL 语法**: WHERE、GROUP BY、HAVING、ORDER BY、LIMIT、聚合函数
+
+#### 4. SQL 网关 (`gateway/`)
+
+集中安全边界，统一数据通道：
+
+```
+┌─────────────┐     HTTP       ┌─────────────────┐
+│  Agent / 前端 │ ─────────────→ │   SQL 网关       │
+│  （不连 DB）  │  /api/sql/*    │ safety-filter   │
+└─────────────┘                 │  ├─ 黑名单       │
+                                │  ├─ 长度限制     │
+                                │  └─ 系统表拦截   │
+                                │       ↓         │
+                                │   引擎调度       │
+                                │  ├─ MySqlEngine │
+                                │  └─ JsonEngine  │
+                                └─────────────────┘
+```
+
+**演示项目（当前）：** 同进程内嵌，由 `src/index.js` 在 `startServer()` 中注入路由  
+**生产部署：** 删除该行 + `pnpm gateway:standalone` 启动独立服务，Agent 通过 `gatewayConfig.gatewayUrl` 指向新地址
 
 #### 4. 工具系统 (`tools.js`)
 
+**单 Agent / 多 Agent 模式（5 个工具）：**
+
 | 工具名称 | 功能描述 | 输入参数 | 输出 |
 |---------|---------|---------|------|
-| **querySalesData** | 查询内置销售数据库 | region, product, dateRange, groupBy | 数据集 |
-| **queryUploadedData** | 查询用户上传的数据集 | datasetId, action, filters | 数据集/统计信息 |
-| **calculateStatistics** | 统计分析 | metric, operation | 统计值 |
+| **querySalesData** | 查询内置销售数据库 | region, product, startDate, endDate, groupBy | 数据集 |
+| **queryUploadedData** | 查询用户上传的数据集 | action, datasetId, filters, limit | 数据集/统计信息 |
+| **calculateStatistics** | 统计分析 | metric, operation (sum/avg/max/min/count) | 统计值 |
+| **generateChartConfig** | 生成图表配置 | type, title, labels, values, xLabel, yLabel | 图表配置对象 |
+| **exportData** | 导出数据 | format, limit | 导出数据 |
+
+**SQL Agent 模式（3 个工具）：**
+
+| 工具名称 | 功能描述 | 输入参数 | 输出 |
+|---------|---------|---------|------|
+| **executeSql** | 执行 SQL 查询 | sql (SELECT 语句) | 查询结果 |
 | **generateChartConfig** | 生成图表配置 | type, title, labels, values | 图表配置对象 |
 | **exportData** | 导出数据 | format, limit | 导出数据 |
 
-#### 5. 数据层 (`db.js`)
+**支持 8 种图表类型：** 柱状图 (bar)、折线图 (line)、饼图 (pie)、环形图 (doughnut)、散点图 (scatter)、雷达图 (radar)、热力图 (heatmap)、仪表盘 (gauge)
+
+#### 6. 数据层 (`db.js`)
 
 - 支持 **JSON File**（默认）和 **MySQL** 两种数据库
 - JSON File 模式：零配置即用，适合开发和演示
@@ -327,6 +374,47 @@ for (let step = 0; step < maxSteps; step++) {
 }
 ```
 
+### 4. SQL 网关 - 查询执行
+
+**POST** `/api/sql/query`
+
+**请求体:**
+```json
+{
+  "sql": "SELECT region, SUM(sales_amount) AS total FROM sales GROUP BY region",
+  "maxRows": 1000
+}
+```
+
+**响应:**
+```json
+{
+  "success": true,
+  "data": [{ "region": "华东", "total": 1234567 }],
+  "count": 4,
+  "limit": 1000,
+  "truncated": false,
+  "duration": 23,
+  "engine": "mysql"
+}
+```
+
+**安全校验失败（400）:**
+```json
+{
+  "success": false,
+  "error": "SQL 安全校验失败",
+  "reason": "只允许 SELECT 查询语句",
+  "code": "SQL_UNSAFE"
+}
+```
+
+### 5. SQL 网关 - 获取 Schema
+
+**GET** `/api/sql/schema` — 返回 JSON 结构
+
+**GET** `/api/sql/schema?format=text` — 返回纯文本（注入到 system prompt）
+
 ---
 
 ## 💡 示例对话
@@ -393,18 +481,20 @@ for (let step = 0; step < maxSteps; step++) {
 | 工具调用准确率 | > 90% (标准测试集) |
 | 最大执行步数 | 5 步 (可配置) |
 | 数据量 | 44 条 Mock 记录 |
-| 支持图表类型 | 7 种 (柱状图、折线图、饼图、散点图、雷达图、热力图、仪表盘) |
+| 支持图表类型 | 8 种 (柱状图、折线图、饼图、环形图、散点图、雷达图、热力图、仪表盘) |
 | 文件支持 | CSV、Excel (.xlsx/.xls) |
 
 ---
 
 ## 🔮 未来规划
 
-- [x] **多 Agent 协作**: Planner + Executor + Reviewer 架构
-- [x] **SQL Agent 模式**: LLM 生成 SQL + Schema 注入 + 安全过滤
 - [ ] **评估框架**: 自动化工具选择准确率测试
-- [ ] **用户认证**: 支持多用户会话管理
 - [ ] **部署优化**: Docker 容器化 + 云平台部署
+- [ ] **SQL 网关独立部署**: 拆为独立进程/容器，Agent 通过 `gatewayConfig.gatewayUrl` 指向
+
+> **关于鉴权 / 多租户 / 多轮会话 / 限流配额**：本服务的 Agent 始终是**无状态**的——不内置用户认证、会话存储、多轮上下文与限流。
+>
+> 这些横切关注点由前置层负责（Auth Gateway / BFF 负责鉴权、多租户与限流，Session Store 负责历史持久化），Agent 只需把历史作为 `messages` 数组前缀注入即可。好处是：Agent 保持单一职责，可水平扩展，同一套代码可被多种身份方案复用。
 
 ---
 

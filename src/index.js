@@ -40,6 +40,11 @@ async function startServer() {
     agent = new DataAgent(API_URL, API_KEY, LLM_MODEL, db);
     console.log('使用单 Agent 架构');
   }
+
+  // SQL 网关路由注入（演示项目同进程部署）
+  // 未来独立部署：把此调用挂到独立 Express 实例
+  const { registerGatewayRoutes } = await import('./gateway/routes.js');
+  registerGatewayRoutes(app, db);
 }
 
 const chartFunction = {
@@ -125,6 +130,8 @@ app.get('/api/tools', async (req, res) => {
     }))
   });
 });
+
+// SQL 网关路由已在 startServer() 内部注入（演示项目同进程部署）
 
 app.get('/api/data/overview', async (req, res) => {
   try {

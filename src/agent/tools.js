@@ -1,3 +1,15 @@
+/**
+ * Agent 工具集（tools）
+ *
+ * 职责：
+ * - 定义 Agent 可用的工具 schema + 实现
+ * - 是 Agent 与外部系统（数据/网关）的唯一桥梁
+ *
+ * 与 SQL 网关的关系：
+ * - querySalesData 内部走 HTTP 调网关 POST /api/sql/query
+ * - Agent 不直接连 DB；安全过滤、限行都在网关
+ */
+
 import { v4 as uuidv4 } from 'uuid';
 
 const toolSchemas = {

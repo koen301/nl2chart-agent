@@ -1,56 +1,27 @@
+/**
+ * JSON 引擎（演示环境）
+ *
+ * 职责：
+ * - 演示项目无真实 DB 时，通过 node-sql-parser 解析 SQL，在内存数据上模拟执行
+ * - 不做安全过滤（安全过滤由调用方/网关负责）
+ *
+ * 与 MySQL 引擎的关系：
+ * - 这是 MySqlEngine 的"无 DB 版本"
+ * - 当配置了 MySQL 时，createEngine() 会自动选择 MySqlEngine，不走本文件
+ * - 本引擎仅在 JSON Mock 模式下使用
+ *
+ * Schema 相关函数（getSchema/getMySQLSchema/getStaticSchema 等）也归此类
+ * 因为它们都依赖内存数据
+ */
+
 import pkg from 'node-sql-parser';
 const { Parser } = pkg;
 
-const FORBIDDEN_KEYWORDS = [
-  'DROP', 'DELETE', 'TRUNCATE', 'UPDATE', 'INSERT',
-  'ALTER', 'CREATE', 'REPLACE', 'RENAME', 'GRANT',
-  'REVOKE', 'EXEC', 'EXECUTE', 'CALL', 'LOAD',
-  'OUTFILE', 'DUMPFILE', 'INTO OUTFILE'
-];
-
-const FORBIDDEN_TABLE_PREFIXES = [
-  'mysql.', 'information_schema.', 'performance_schema.', 'sys.'
-];
-
-class SqlSafetyFilter {
-  static validate(sql) {
-    if (!sql || typeof sql !== 'string') {
-      return { valid: false, error: 'SQL 为空或不是字符串' };
-    }
-
-    const trimmed = sql.trim();
-    if (!trimmed) {
-      return { valid: false, error: 'SQL 为空' };
-    }
-
-    const upperSql = trimmed.toUpperCase();
-
-    if (!upperSql.startsWith('SELECT') && !upperSql.startsWith('WITH')) {
-      return { valid: false, error: '只允许 SELECT 查询语句' };
-    }
-
-    for (const keyword of FORBIDDEN_KEYWORDS) {
-      const regex = new RegExp(`\\b${keyword}\\b`, 'i');
-      if (regex.test(upperSql)) {
-        return { valid: false, error: `禁止使用危险关键字: ${keyword}` };
-      }
-    }
-
-    for (const prefix of FORBIDDEN_TABLE_PREFIXES) {
-      if (upperSql.includes(prefix.toUpperCase())) {
-        return { valid: false, error: `禁止访问系统表: ${prefix}` };
-      }
-    }
-
-    if (trimmed.length > 2000) {
-      return { valid: false, error: 'SQL 长度超过限制' };
-    }
-
-    return { valid: true };
-  }
-}
-
-class JsonSqlEngine {
+/**
+ * 适配内存 JSON 数据的 SQL 引擎
+ * 适用于演示场景：数据通过 db.getAll() 获取
+ */
+export class JsonEngine {
   constructor(db) {
     this.db = db;
     this.parser = new Parser();
@@ -63,12 +34,11 @@ class JsonSqlEngine {
     return [];
   }
 
+  /**
+   * 执行 SQL
+   * 注意：本方法不做任何安全校验，调用方需自行负责
+   */
   async execute(sql) {
-    const validation = SqlSafetyFilter.validate(sql);
-    if (!validation.valid) {
-      return { success: false, error: validation.error };
-    }
-
     try {
       const ast = this.parser.astify(sql, { database: 'mysql' });
       const astArray = Array.isArray(ast) ? ast : [ast];
@@ -124,102 +94,80 @@ class JsonSqlEngine {
     return data;
   }
 
-  applyWhere(data, where) {
-    return data.filter(row => this.evalExpression(row, where));
-  }
-
   evalExpression(row, expr) {
-    if (!expr) return true;
+    if (!expr) return null;
 
     if (expr.type === 'binary_expr') {
       const left = this.evalExpression(row, expr.left);
       const right = this.evalExpression(row, expr.right);
-      const op = expr.operator.toUpperCase();
-
-      switch (op) {
-        case '=': return left === right;
-        case '!=': case '<>': return left !== right;
-        case '>': return left > right;
-        case '>=': return left >= right;
-        case '<': return left < right;
-        case '<=': return left <= right;
-        case 'AND': return left && right;
-        case 'OR': return left || right;
-        case 'LIKE': return this.evalLike(left, right);
-        case 'IN': return this.evalIn(row, expr);
-        case 'BETWEEN': return this.evalBetween(row, expr);
-        default: return false;
-      }
+      return this.evalBinaryExpr(left, expr.operator, right);
     }
 
     if (expr.type === 'column_ref') {
-      return row[expr.column.toLowerCase()] ?? row[expr.column];
-    }
-
-    if (expr.type === 'string' || expr.type === 'single_quote_string') {
-      return expr.value;
+      return row[expr.column.toLowerCase()];
     }
 
     if (expr.type === 'number') {
       return parseFloat(expr.value);
     }
 
+    if (expr.type === 'string') {
+      return expr.value;
+    }
+
     if (expr.type === 'null') {
       return null;
     }
 
+    if (expr.type === 'aggr_func') {
+      return null; // 在聚合上下文处理
+    }
+
     if (expr.type === 'function') {
-      return this.evalFunction(row, expr);
+      return null;
     }
 
-    return true;
-  }
-
-  evalLike(value, pattern) {
-    if (value == null) return false;
-    const regex = new RegExp('^' + pattern.replace(/%/g, '.*').replace(/_/g, '.') + '$', 'i');
-    return regex.test(String(value));
-  }
-
-  evalIn(row, expr) {
-    const leftValue = this.evalExpression(row, expr.left);
-    const rightValues = (expr.right.value || []).map(v => this.evalExpression(row, v));
-    return rightValues.includes(leftValue);
-  }
-
-  evalBetween(row, expr) {
-    const value = this.evalExpression(row, expr.expr);
-    const min = this.evalExpression(row, expr.right.left);
-    const max = this.evalExpression(row, expr.right.right);
-    return value >= min && value <= max;
-  }
-
-  evalFunction(row, expr) {
-    const fnName = expr.name.name.toUpperCase();
-    const arg = expr.args ? this.evalExpression(row, expr.args.expr) : null;
-
-    if (fnName === 'YEAR' && arg) {
-      return new Date(arg).getFullYear();
-    }
-    if (fnName === 'MONTH' && arg) {
-      return new Date(arg).getMonth() + 1;
-    }
-    if (fnName === 'DATE' && arg) {
-      return new Date(arg).toISOString().split('T')[0];
-    }
     return null;
   }
 
+  evalBinaryExpr(left, op, right) {
+    switch (op.toUpperCase()) {
+      case '=': return left == right;
+      case '!=': case '<>': return left != right;
+      case '>': return left > right;
+      case '<': return left < right;
+      case '>=': return left >= right;
+      case '<=': return left <= right;
+      case 'AND': return left && right;
+      case 'OR': return left || right;
+      case 'LIKE': {
+        if (left == null || right == null) return false;
+        const pattern = String(right).replace(/%/g, '.*').replace(/_/g, '.');
+        return new RegExp(`^${pattern}$`, 'i').test(String(left));
+      }
+      default: return null;
+    }
+  }
+
+  applyWhere(data, where) {
+    return data.filter(row => this.evalExpression(row, where));
+  }
+
   extractGroupColumns(groupby) {
-    const groups = Array.isArray(groupby) ? groupby : [groupby];
-    return groups
-      .filter(g => g.type === 'column_ref')
+    if (!groupby) return [];
+    const cols = groupby.columns || (Array.isArray(groupby) ? groupby : [groupby]);
+    return cols
+      .filter(g => g && g.type === 'column_ref')
       .map(g => g.column.toLowerCase());
   }
 
   extractAggregations(columns) {
     if (columns === '*' || !Array.isArray(columns)) return [];
-    return columns.filter(c => c.type === 'function' || (c.expr && c.expr.type === 'function'));
+    return columns.filter(c => {
+      if (c.expr && c.expr.type === 'aggr_func') return true;
+      if (c.type === 'function' || c.type === 'aggr_func') return true;
+      return false;
+    });
   }
 
   applyGroupBy(data, groupCols, aggregations) {
@@ -342,24 +290,53 @@ class JsonSqlEngine {
   }
 
   applyLimit(data, limit) {
-    const lim = Array.isArray(limit) ? limit[0] : limit;
-    const offset = lim.offset ? parseInt(lim.offset.value) : 0;
-    const rowcount = parseInt(lim.rowcount.value);
+    if (!limit) return data;
+    // mysql 模式: { value: [{type:'number', value:100}], seperator:'' }
+    // 也可能传入 array
+    let lim = limit;
+    if (lim && lim.value && Array.isArray(lim.value)) {
+      // 把 { type:'number', value:100 } 标准化为 { rowcount: 100 }
+      const items = lim.value;
+      if (items.length === 1) {
+        const v = items[0].value;
+        lim = { rowcount: typeof v === 'number' ? v : parseInt(v) };
+      } else if (items.length === 2) {
+        lim = { offset: parseInt(items[0].value), rowcount: parseInt(items[1].value) };
+      } else {
+        return data;
+      }
+    }
+    if (Array.isArray(lim)) lim = lim[0];
+    if (!lim) return data;
+    let offset = 0;
+    let rowcount = data.length;
+    if (lim.offset !== undefined) {
+      offset = typeof lim.offset === 'number' ? lim.offset : parseInt(lim.offset);
+    }
+    if (lim.rowcount !== undefined) {
+      rowcount = typeof lim.rowcount === 'number' ? lim.rowcount : parseInt(lim.rowcount);
+    }
+    if (isNaN(offset)) offset = 0;
+    if (isNaN(rowcount)) rowcount = data.length;
     return data.slice(offset, offset + rowcount);
   }
 
   applyColumns(data, columns) {
+    // * 通配
+    if (columns === '*' || (Array.isArray(columns) && columns.length === 1 && columns[0].expr && columns[0].expr.column === '*')) {
+      return data;
+    }
     return data.map(row => {
       const newRow = {};
       columns.forEach(col => {
         if (col.type === 'column_ref') {
-          const name = col.column.toLowerCase();
+          const name = (col.column || '').toLowerCase();
           newRow[name] = row[name];
-        } else if (col.type === 'function' || (col.expr && col.expr.type === 'function')) {
+        } else if (col.type === 'function' || col.type === 'aggr_func' || (col.expr && (col.expr.type === 'function' || col.expr.type === 'aggr_func'))) {
           const alias = this.getAggAlias(col);
           newRow[alias] = this.evalAggregation(col, row);
         } else if (col.expr && col.expr.type === 'column_ref') {
-          const name = col.expr.column.toLowerCase();
+          const name = (col.expr.column || '').toLowerCase();
           newRow[name] = row[name];
         }
       });
@@ -368,34 +345,16 @@ class JsonSqlEngine {
   }
 }
 
-class MySqlEngine {
-  constructor(pool) {
-    this.pool = pool;
-  }
+/**
+ * 适配真实 MySQL 数据库的 SQL 引擎
+ * 适用于生产场景：数据通过 mysql2 pool 查询
+ */
+// MySqlEngine 已迁至 src/engines/mysql-engine.js，请从那里导入
+// 这里不再重复定义，避免双份实现
 
-  async execute(sql) {
-    const validation = SqlSafetyFilter.validate(sql);
-    if (!validation.valid) {
-      return { success: false, error: validation.error };
-    }
+// =================== Schema 相关 ===================
 
-    try {
-      const [rows] = await this.pool.query(sql);
-      return { success: true, data: rows, count: rows.length, sql };
-    } catch (error) {
-      return { success: false, error: `SQL 执行失败: ${error.message}` };
-    }
-  }
-}
-
-function createSqlEngine(db) {
-  if (db && db.query && typeof db.query === 'function' && !db.getAll) {
-    return new MySqlEngine(db);
-  }
-  return new JsonSqlEngine(db);
-}
-
-async function getMySQLSchema(pool) {
+export async function getMySQLSchema(pool) {
   if (!pool) return null;
   try {
     const [tables] = await pool.query(`
@@ -470,7 +429,18 @@ async function getMySQLSchema(pool) {
   }
 }
 
-function getUploadedSchema(datasets = []) {
+function inferTypeFromValue(val) {
+  if (val === null || val === undefined) return 'TEXT';
+  if (typeof val === 'number') {
+    return Number.isInteger(val) ? 'INT' : 'DECIMAL(15,2)';
+  }
+  if (typeof val === 'boolean') return 'BOOLEAN';
+  if (val instanceof Date) return 'DATE';
+  if (/^\d{4}-\d{2}-\d{2}/.test(String(val))) return 'DATE';
+  return 'VARCHAR(255)';
+}
+
+export function getUploadedSchema(datasets = []) {
   if (!datasets || datasets.length === 0) return null;
 
   return {
@@ -499,35 +469,7 @@ function getUploadedSchema(datasets = []) {
   };
 }
 
-function inferTypeFromValue(val) {
-  if (val === null || val === undefined) return 'TEXT';
-  if (typeof val === 'number') {
-    return Number.isInteger(val) ? 'INT' : 'DECIMAL(15,2)';
-  }
-  if (typeof val === 'boolean') return 'BOOLEAN';
-  if (val instanceof Date) return 'DATE';
-  if (/^\d{4}-\d{2}-\d{2}/.test(String(val))) return 'DATE';
-  return 'VARCHAR(255)';
-}
-
-function inferEnumFromValues(datasets) {
-  const enumMap = {};
-  for (const d of datasets) {
-    if (!d.data || d.data.length === 0) continue;
-    for (const col of d.columns || []) {
-      const unique = new Set();
-      for (const row of d.data.slice(0, 200)) {
-        if (row[col] != null) unique.add(row[col]);
-      }
-      if (unique.size > 0 && unique.size <= 20) {
-        enumMap[col] = Array.from(unique);
-      }
-    }
-  }
-  return enumMap;
-}
-
-function getStaticSchema() {
+export function getStaticSchema() {
   return {
     database: 'nl2chart',
     tables: [
@@ -548,7 +490,7 @@ function getStaticSchema() {
   };
 }
 
-function buildSchemaText(schema) {
+export function buildSchemaText(schema) {
   if (!schema) return '\n## 数据库 Schema\n（暂无可用数据）\n';
 
   let text = `\n## 数据库 Schema\n`;
@@ -580,7 +522,7 @@ function buildSchemaText(schema) {
   return text;
 }
 
-async function getSchema({ pool = null, datasets = [], preferDynamic = true } = {}) {
+export async function getSchema({ pool = null, datasets = [], preferDynamic = true } = {}) {
   if (preferDynamic) {
     if (pool) {
       const mysqlSchema = await getMySQLSchema(pool);
@@ -604,7 +546,7 @@ async function getSchema({ pool = null, datasets = [], preferDynamic = true } = 
   return getStaticSchema();
 }
 
-function getSchemaSync({ datasets = [] } = {}) {
+export function getSchemaSync({ datasets = [] } = {}) {
   if (datasets && datasets.length > 0) {
     const uploadedSchema = getUploadedSchema(datasets);
     if (uploadedSchema) return uploadedSchema;
@@ -612,8 +554,6 @@ function getSchemaSync({ datasets = [] } = {}) {
   return getStaticSchema();
 }
 
-function schemaToText(schema) {
+export function schemaToText(schema) {
   return buildSchemaText(schema);
 }
-
-export { SqlSafetyFilter, JsonSqlEngine, MySqlEngine, createSqlEngine, getSchema, getSchemaSync, schemaToText, getStaticSchema, getMySQLSchema, getUploadedSchema, buildSchemaText };
