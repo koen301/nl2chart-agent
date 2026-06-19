@@ -144,6 +144,11 @@ node src/index.js
 
 服务启动后，访问: http://localhost:3000
 
+> 💡 若启动后 Agent 调用报 `getaddrinfo EAI_AGAIN ...`（本地 DNS 偶发解析失败），改用：
+> ```bash
+> pnpm start:dnssafe
+> ```
+
 ---
 
 ## 📁 项目结构
@@ -312,9 +317,9 @@ for (let step = 0; step < maxSteps; step++) {
 
 ## 📡 API 文档
 
-### 1. Agent 对话接口
+### 1. Agent 对话接口（SSE 流式）
 
-**POST** `/api/agent`
+**POST** `/api/agent/stream`
 
 **请求体:**
 ```json
@@ -323,19 +328,23 @@ for (let step = 0; step < maxSteps; step++) {
 }
 ```
 
-**响应:**
-```json
-{
-  "success": true,
-  "finalResponse": "已为您生成销售趋势折线图...",
-  "chartConfig": {
-    "type": "line",
-    "title": "2024年上半年销售趋势",
-    "labels": ["2024-01", "2024-02", ...],
-    "values": [456000, 512000, ...]
-  },
-  "conversation": [...]
-}
+**响应:** `Content-Type: text/event-stream`（Server-Sent Events），按 `event:` 推送以下事件：
+
+| Event | data.type | 说明 |
+|-------|-----------|------|
+| `step` | `step_start` | Agent 进入新一步（`data.step` 为步号） |
+| `message` | `content` | LLM 思考/总结的增量文本 |
+| `tool_call` | — | LLM 决定调用某个工具（`data.tool`、`data.args`） |
+| `tool_result` | — | 工具执行结果摘要（`data.result.summary`） |
+| `complete` | — | 整轮结束，附带最终 `chartConfig`（若有） |
+| `end` | — | 流结束 |
+| `error` | — | 错误信息（`data.error`） |
+
+**完整示例**（含图表配置）：
+
+```
+event: complete
+data: {"chartConfig": {"type":"line","title":"2024年上半年销售趋势","labels":["2024-01",...], "values":[456000, 512000, ...]}}
 ```
 
 ### 2. 获取工具列表
@@ -356,25 +365,7 @@ for (let step = 0; step < maxSteps; step++) {
 }
 ```
 
-### 3. 数据概览
-
-**GET** `/api/data/overview`
-
-**响应:**
-```json
-{
-  "success": true,
-  "totalRecords": 44,
-  "regions": ["华东", "华北", "华南", "西南"],
-  "products": ["笔记本电脑", "手机", "平板电脑"],
-  "dateRange": {
-    "min_date": "2024-01-15",
-    "max_date": "2024-06-12"
-  }
-}
-```
-
-### 4. SQL 网关 - 查询执行
+### 3. SQL 网关 - 查询执行
 
 **POST** `/api/sql/query`
 
@@ -409,7 +400,7 @@ for (let step = 0; step < maxSteps; step++) {
 }
 ```
 
-### 5. SQL 网关 - 获取 Schema
+### 4. SQL 网关 - 获取 Schema
 
 **GET** `/api/sql/schema` — 返回 JSON 结构
 

@@ -6,6 +6,7 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
+    "start:dnssafe": "node --dns-result-order=ipv4first src/index.js",
     "dev": "node --watch src/index.js",
     "gateway:standalone": "node src/gateway/standalone.js"
   },

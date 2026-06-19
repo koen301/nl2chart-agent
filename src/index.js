@@ -47,51 +47,6 @@ async function startServer() {
   registerGatewayRoutes(app, db);
 }
 
-const chartFunction = {
-  name: 'renderChart',
-  description: '根据用户自然语言描述，生成图表的配置',
-  parameters: {
-    type: 'object',
-    properties: {
-      type: {
-        type: 'string',
-        enum: ['bar', 'line', 'pie'],
-        description: '图表类型：柱状图、折线图、饼图'
-      },
-      title: {
-        type: 'string',
-        description: '图表标题'
-      },
-      labels: {
-        type: 'array',
-        items: { type: 'string' },
-        description: 'X轴或分类标签，例如 ["周一","周二","周三"]'
-      },
-      values: {
-        type: 'array',
-        items: { type: 'number' },
-        description: '对应的数值，长度与labels相同'
-      }
-    },
-    required: ['type', 'title', 'labels', 'values']
-  }
-};
-
-app.post('/api/agent', async (req, res) => {
-  const { userInput } = req.body;
-  if (!userInput) {
-    return res.status(400).json({ error: '缺少 userInput' });
-  }
-
-  try {
-    const result = await agent.execute(userInput);
-    return res.json(result);
-  } catch (error) {
-    console.error('Agent 执行失败:', error.message);
-    res.status(500).json({ error: 'Agent 执行错误' });
-  }
-});
-
 app.post('/api/agent/stream', async (req, res) => {
   const { userInput } = req.body;
   if (!userInput) {
@@ -132,80 +87,6 @@ app.get('/api/tools', async (req, res) => {
 });
 
 // SQL 网关路由已在 startServer() 内部注入（演示项目同进程部署）
-
-app.get('/api/data/overview', async (req, res) => {
-  try {
-    let allData;
-    if (typeof db.getAll === 'function') {
-      allData = db.getAll();
-    } else {
-      allData = await db.getAll();
-    }
-    const regions = [...new Set(allData.map(r => r.region))];
-    const products = [...new Set(allData.map(r => r.product))];
-    const dates = allData.map(r => r.sale_date).sort();
-    
-    res.json({
-      success: true,
-      totalRecords: allData.length,
-      regions: regions,
-      products: products,
-      dateRange: {
-        min_date: dates[0],
-        max_date: dates[dates.length - 1]
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.post('/api/chart', async (req, res) => {
-  const { userInput } = req.body;
-  if (!userInput) {
-    return res.status(400).json({ error: '缺少 userInput' });
-  }
-
-  try {
-    const axios = (await import('axios')).default;
-    const response = await axios({
-      method: 'post',
-      url: API_URL,
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${API_KEY}`
-      },
-      data: {
-        model: LLM_MODEL,
-        messages: [
-          {
-            role: 'system',
-            content: `你是一个数据分析助手。用户会输入自然语言描述，你判断他想看什么图表，并调用 renderChart 函数返回图表配置。
-            注意：只调用函数，不要输出额外文字。如果用户描述模糊，合理推断默认数据（例如最近一周的随机趋势数据）。`
-          },
-          { role: 'user', content: userInput }
-        ],
-        tools: [{
-          type: 'function',
-          function: chartFunction
-        }],
-        tool_choice: { type: 'function', function: { name: 'renderChart' } },
-        temperature: 0.2
-      }
-    });
-
-    const toolCalls = response.data.choices[0].message.tool_calls;
-    if (toolCalls && toolCalls.length > 0) {
-      const chartConfig = JSON.parse(toolCalls[0].function.arguments);
-      return res.json({ success: true, chartConfig });
-    } else {
-      return res.json({ success: false, message: '模型未返回图表配置，请换个说法重试。' });
-    }
-  } catch (error) {
-    console.error('AI 调用失败:', error.message);
-    res.status(500).json({ error: 'AI 服务错误' });
-  }
-});
 
 const uploadDir = path.join(__dirname, '../uploads');
 if (!fs.existsSync(uploadDir)) {
@@ -324,44 +205,10 @@ app.get('/api/datasets', (req, res) => {
   res.json({ success: true, datasets });
 });
 
-app.post('/api/datasets/:id/query', (req, res) => {
-  const { id } = req.params;
-  const { query } = req.body;
-  
-  if (!global.uploadedDatasets || !global.uploadedDatasets[id]) {
-    return res.status(404).json({ success: false, error: '数据集不存在' });
-  }
-  
-  const dataset = global.uploadedDatasets[id];
-  
-  let result = dataset.data;
-  
-  if (req.body.filters) {
-    result = result.filter(row => {
-      for (const [key, value] of Object.entries(req.body.filters)) {
-        if (row[key] != value) return false;
-      }
-      return true;
-    });
-  }
-  
-  if (req.body.limit) {
-    result = result.slice(0, req.body.limit);
-  }
-  
-  res.json({
-    success: true,
-    columns: dataset.columns,
-    data: result,
-    total: dataset.data.length
-  });
-});
-
 const PORT = process.env.PORT || 3000;
 startServer().then(() => {
   app.listen(PORT, () => {
     console.log(`后端服务运行在 http://localhost:${PORT}`);
-    console.log(`Agent 接口: http://localhost:${PORT}/api/agent`);
-    console.log(`数据概览: http://localhost:${PORT}/api/data/overview`);
+    console.log(`Agent 流式接口: http://localhost:${PORT}/api/agent/stream`);
   });
 });
