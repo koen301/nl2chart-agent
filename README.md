@@ -5,6 +5,20 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18.0-green.svg)](https://nodejs.org/)
 [![Agent Pattern](https://img.shields.io/badge/Agent-ReAct-orange.svg)](https://arxiv.org/abs/2210.03629)
+[![AI SDK Branch](https://img.shields.io/badge/分支-ai--sdk-FF4785.svg?logo=vercel&logoColor=white)](https://github.com/koen301/nl2chart-agent/tree/ai-sdk)
+
+---
+
+## 🏢 产品矩阵
+
+> NL2Chart Agent 同时提供**两条交付路径**，对应企业落地中两类典型决策：**可控自研** vs **快速演进**。
+
+| 分支 | 定位 | 核心价值 | 适用场景 |
+|------|------|----------|----------|
+| [`main`](https://github.com/koen301/nl2chart-agent/tree/main) **(生产稳定版)** | **自研可控** —— 零 LLM 框架依赖，原生 OpenAI 协议级集成 | ✅ 供应链零风险 / 私有化 & 信创合规 / 协议级审计 / 任意深度定制 | 金融、政务、医疗等**强合规**场景；自建 LLM 网关；需要白盒排障的生产环境 |
+| [`ai-sdk`](https://github.com/koen301/nl2chart-agent/tree/ai-sdk) **(快速演进版)** | **AI SDK 驱动** —— `streamText` + Zod + `@ai-sdk/openai-compatible` | ✅ 30% 代码量 / 内置多 Provider 切换 / 类型安全 / 社区活跃迭代 | 互联网产品 / PoC 验证 / 频繁切换模型厂商 / 团队偏 TypeScript 类型工程化 |
+
+**两分支均完整具备** SQL 安全网关、流式响应、多 Agent 架构、文件上传、CSV/Excel 数据导入、ECharts 可视化等企业级能力，按需选择技术栈。
 
 ---
 
