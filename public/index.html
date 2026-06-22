@@ -615,9 +615,10 @@
       agentMessageDiv.className = 'message agent';
       agentMessageDiv.innerHTML = '<strong>Agent:</strong> <div class="stream-content"></div>';
       document.getElementById('chat-container').appendChild(agentMessageDiv);
-      
+
       const streamContent = agentMessageDiv.querySelector('.stream-content');
-      let messageContent = '';
+      // 每个 step 独立的文本累积，避免多段思考混在一起
+      const stepTexts = {};  // { [step]: '...累积文本...' }
       
       try {
         const response = await fetch('/api/agent/stream', {
@@ -661,14 +662,34 @@
                      scrollToBottom();
                    }
                    else if (currentEvent === 'message' && eventData.type === 'content') {
-                     messageContent += eventData.content;
-                     let msgEl = streamContent.querySelector('.message-content');
+                     // 按 step 分块：每个 step 自己的 message-content div
+                     // 兼容旧消息：eventData.step 可能为 undefined，则归入 'all'（显示在最末）
+                     const stepKey = eventData.step != null ? `s${eventData.step}` : 'all';
+                     stepTexts[stepKey] = (stepTexts[stepKey] || '') + eventData.content;
+                     let msgEl = streamContent.querySelector(`.message-content[data-step="${stepKey}"]`);
                      if (!msgEl) {
                        msgEl = document.createElement('div');
                        msgEl.className = 'message-content';
-                       streamContent.appendChild(msgEl);
+                       msgEl.setAttribute('data-step', stepKey);
+                       // 插入位置：如果对应 step-indicator 存在，插在它之后；否则追加到末尾
+                       const stepIdx = eventData.step;
+                       const stepEl = (stepIdx != null) ? streamContent.querySelector(`#step-${stepIdx}`) : null;
+                       if (stepEl) {
+                         // 找到 stepEl 之后最近一个 .tool-call/.tool-result/.message-content 的前面插入
+                         let insertBefore = stepEl.nextElementSibling;
+                         while (insertBefore && !insertBefore.classList.contains('tool-call') && !insertBefore.classList.contains('tool-result') && !insertBefore.classList.contains('message-content')) {
+                           insertBefore = insertBefore.nextElementSibling;
+                         }
+                         if (insertBefore) {
+                           streamContent.insertBefore(msgEl, insertBefore);
+                         } else {
+                           stepEl.insertAdjacentElement('afterend', msgEl);
+                         }
+                       } else {
+                         streamContent.appendChild(msgEl);
+                       }
                      }
-                     msgEl.innerHTML = messageContent.replace(/\n/g, '<br>');
+                     msgEl.innerHTML = stepTexts[stepKey].replace(/\n/g, '<br>');
                      scrollToBottom();
                      // 小延迟让浏览器有时间渲染
                      await new Promise(r => setTimeout(r, 30));

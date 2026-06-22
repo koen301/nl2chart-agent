@@ -10,6 +10,8 @@
  * - Agent 不直接连 DB；安全过滤、限行都在网关
  */
 
+import { tool } from 'ai';
+import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 
 const toolSchemas = {
@@ -483,12 +485,85 @@ class AgentTools {
     }
 
     global.recentQueryResult = null;
-    
+
     return {
       success: false,
       error: '无效的操作类型'
     };
   }
+}
+
+/**
+ * AI SDK 风格的工具集（Vercel AI SDK 4.x）
+ *
+ * 改造后：DataAgent/MultiAgent/SqlAgent 都通过 buildTools(db) 拿到
+ *         zod schema + execute 的工具对象，传给 streamText({ tools })。
+ *
+ * 与 toolSchemas 的关系：
+ * - toolSchemas 保留给老代码（不再使用，但暂留以备回滚）
+ * - 新代码统一用 buildTools
+ */
+export function buildTools(db) {
+  const agentTools = new AgentTools(db);
+
+  return {
+    querySalesData: tool({
+      description: '查询销售数据数据库，支持按地区、产品、时间范围筛选，返回原始数据或聚合统计',
+      inputSchema: z.object({
+        region:   z.enum(['华东', '华北', '华南', '西南']).optional().describe('地区筛选，可选'),
+        product:  z.enum(['笔记本电脑', '手机', '平板电脑']).optional().describe('产品筛选，可选'),
+        startDate: z.string().optional().describe('开始日期，格式 YYYY-MM-DD，可选'),
+        endDate:   z.string().optional().describe('结束日期，格式 YYYY-MM-DD，可选'),
+        groupBy:  z.enum(['region', 'product', 'month', 'none']).describe('聚合维度：按地区、产品、月份或不聚合'),
+      }),
+      execute: async (args) => agentTools.querySalesData(args),
+    }),
+
+    generateChartConfig: tool({
+      description: '根据查询结果生成图表配置，支持柱状图、折线图、饼图、散点图、雷达图、热力图、仪表盘。重要：调用此工具前必须先用 querySalesData/queryUploadedData/calculateStatistics 获取实际数据，并把数据中的数值字段填入 values 数组（例如：查到了 [{product:"笔记本",total_sales:904000},{product:"手机",total_sales:634000}]，则 values 应为 [904000, 634000]，labels 为 ["笔记本","手机"]）。values 不能为空数组。【雷达图数据准备】雷达图用于多维度对比分析，需要：1) 将各维度数据归一化到0-100范围(当前值/最大值*100)；2) labels为维度名称(如["销售额","销售量","华东占比"...]);3) values为二维数组，每个子数组是一个主体的归一化数据，如：values=[[100,85,60],[88,100,45],[36,21,30]]表示3个主体在各维度的归一化值',
+      inputSchema: z.object({
+        type:   z.enum(['bar', 'line', 'pie', 'doughnut', 'scatter', 'radar', 'heatmap', 'gauge']).describe('图表类型：bar(柱状图)、line(折线图)、pie(饼图)、doughnut(环形图)、scatter(散点图)、radar(雷达图)、heatmap(热力图)、gauge(仪表盘)'),
+        title:  z.string().describe('图表标题'),
+        labels: z.array(z.string()).describe('分类标签数组，用于饼图、雷达图、仪表盘等'),
+        values: z.array(z.union([z.number(), z.array(z.number())])).describe('对应的数值数组；热力图需要二维数组[[]]'),
+        xLabel:      z.string().optional().describe('散点图X轴名称，可选'),
+        yLabel:      z.string().optional().describe('散点图Y轴名称，可选'),
+        xLabels:     z.array(z.string()).optional().describe('热力图X轴标签数组，可选'),
+        yLabels:     z.array(z.string()).optional().describe('热力图Y轴标签数组，可选'),
+        seriesNames: z.array(z.string()).optional().describe('多系列图表（如折线图多线）的系列名称数组，可选'),
+      }),
+      execute: async (args) => agentTools.generateChartConfig(args),
+    }),
+
+    calculateStatistics: tool({
+      description: '对数据进行统计分析，计算总和、平均值、最大值、最小值等',
+      inputSchema: z.object({
+        metric:    z.enum(['sales_amount', 'quantity']).describe('要统计的指标'),
+        operation: z.enum(['sum', 'avg', 'max', 'min', 'count']).describe('统计操作类型'),
+      }),
+      execute: async (args) => agentTools.calculateStatistics(args),
+    }),
+
+    exportData: tool({
+      description: '导出查询结果为JSON格式数据',
+      inputSchema: z.object({
+        format: z.enum(['json']).describe('导出格式'),
+        limit:  z.number().optional().describe('限制导出条数'),
+      }),
+      execute: async (args) => agentTools.exportData(args),
+    }),
+
+    queryUploadedData: tool({
+      description: '查询用户上传的数据集，支持查看数据内容、字段信息和基本统计',
+      inputSchema: z.object({
+        datasetId: z.string().optional().describe('数据集ID，如果不提供则返回所有可用数据集列表'),
+        action:    z.enum(['list', 'query', 'info']).describe('操作类型：list=列出所有数据集，query=查询数据，info=查看数据集信息'),
+        filters:   z.record(z.string(), z.any()).optional().describe('查询过滤条件，键为字段名，值为过滤值'),
+        limit:     z.number().optional().describe('限制返回条数，默认100'),
+      }),
+      execute: async (args) => agentTools.queryUploadedData(args),
+    }),
+  };
 }
 
 export { toolSchemas, AgentTools };

@@ -159,10 +159,11 @@ nl2chart-agent/
 │   ├── index.js             # Express 主服务器 & API 路由（含网关路由注入）
 │   ├── agent/               # Agent 模块
 │   │   ├── index.js         # Agent 入口 (根据环境变量选择模式)
-│   │   ├── agent.js         # 单 Agent 引擎 (ReAct 循环)
+│   │   ├── llm.js           # LLM 客户端封装（@ai-sdk/openai-compatible）
+│   │   ├── agent.js         # 单 Agent 引擎（Vercel AI SDK streamText）
 │   │   ├── multi-agent.js   # 多 Agent 引擎 (Planner + Executor + Reviewer)
 │   │   ├── sql-agent.js     # SQL Agent 引擎 (LLM 生成 SQL，过 HTTP 调网关)
-│   │   └── tools.js         # 工具集定义 & 实现
+│   │   └── tools.js         # 工具集定义（Zod schema） & 实现
 │   ├── engines/             # 执行引擎（按数据源拆分）
 │   │   ├── index.js         # 工厂：按 db.type 自动选择引擎
 │   │   ├── mysql-engine.js  # MySQL 引擎：直连 DB，无 SQL 解析
@@ -295,6 +296,31 @@ for (let step = 0; step < maxSteps; step++) {
 
 **支持 8 种图表类型：** 柱状图 (bar)、折线图 (line)、饼图 (pie)、环形图 (doughnut)、散点图 (scatter)、雷达图 (radar)、热力图 (heatmap)、仪表盘 (gauge)
 
+#### 5. Vercel AI SDK 改造（`agent/*.js` + `tools.js`）
+
+三种 Agent 都基于 [Vercel AI SDK](https://sdk.vercel.ai/) v5 实现，享受开箱即用的：
+
+| 能力 | 旧实现 | 新实现 |
+|------|--------|--------|
+| LLM 调用 | 手写 `axios` 调 OpenAI Compatible | `@ai-sdk/openai-compatible` 适配器 |
+| 工具 schema | 手写 JSON Schema | `zod` schema + `tool()` 包装 |
+| 流式输出 | 解析 SSE chunk 自己拼 | `streamText` 异步迭代器 + `fullStream` 事件 |
+| 多步推理 | 手动 `messages.push` 循环 | `stopWhen: stepCountIs(n)` 自动循环 |
+| 错误处理 | 分散在各 catch | AI SDK 统一 `error` 事件流 |
+
+**事件流映射**（`fullStream` → SSE 事件）：
+
+| AI SDK `part.type` | SSE `event` | 用途 |
+|-------------------|-------------|------|
+| `start-step` / `step-start` | `step` | 进入新一步（前端显示进度） |
+| `text-delta` | `message` | 文本增量（DataAgent、SqlAgent） |
+| `tool-call` | `tool_call` | LLM 决定调哪个工具 |
+| `tool-result` | `tool_result` | 工具执行结果摘要 |
+| `finish` / `done` | `complete` | 整轮结束，附 `chartConfig` |
+| `error` | `error` | 错误终止 |
+
+> 兼容性提示：代码同时兼容 ai@4（`part.args`/`part.result`）和 ai@5（`part.input`/`part.output`），升 / 降级无需改业务代码。
+
 #### 6. 数据层 (`db.js`)
 
 - 支持 **JSON File**（默认）和 **MySQL** 两种数据库
@@ -306,8 +332,9 @@ for (let step = 0; step < maxSteps; step++) {
 
 | 类别 | 技术 |
 |------|------|
-| **Agent 框架** | 自研 ReAct Agent |
-| **LLM API** | OpenAI Compatible Function Calling |
+| **Agent 框架** | Vercel AI SDK v5（`streamText` + `tool` + Zod 校验） |
+| **LLM 客户端** | `@ai-sdk/openai-compatible`（OpenAI / SiliconFlow / 智谱 等兼容接口） |
+| **流式协议** | Server-Sent Events (SSE) |
 | **后端** | Node.js + Express.js (v5) |
 | **数据库** | JSON File / MySQL (可配置) |
 | **前端** | HTML/CSS/JS + ECharts v5 |
@@ -448,6 +475,26 @@ data: {"chartConfig": {"type":"line","title":"2024年上半年销售趋势","lab
 1. 调用 `querySalesData(product='笔记本电脑', groupBy='region')`
 2. 调用 `calculateStatistics(metric='sales_amount', operation='sum')`
 3. 返回统计结果: 总销售额 1,852,000 元
+
+---
+
+## 🧪 回归测试
+
+```bash
+npm run test:agents
+```
+
+脚本 `test-all-agents.mjs` 对三种 Agent 模式做端到端验证：
+
+| 模式 | 验证点 | userInput |
+|------|--------|-----------|
+| **DataAgent** | 完整 SSE 流 + 工具调用 + 图表生成 | "用柱状图展示各产品销量" |
+| **MultiAgent** | Planner/Executor/Reviewer 三段式 + 图表生成 | "用柱状图展示各产品销量" |
+| **SqlAgent** | LLM 生成 SQL + 工具调用 + 流式文本回复 | "查询 sales_data 表前 5 条数据" |
+
+每个 Agent 至少验证：1 个 `complete` 事件、≥1 次 `tool_call` 事件、需图表的两种还会验证 `chartConfig` 完整性（type / labels / values）。
+
+> SqlAgent 不强制要求图表：当前 json-engine 对 `SUM(field) AS alias` 这类聚合 + 别名复合语法解析有 bug（与本次 AI SDK 改造无关），可作为后续 issue 跟踪。
 
 ---
 

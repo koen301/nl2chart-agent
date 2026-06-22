@@ -1,17 +1,17 @@
 /**
  * Multi Agent（多 Agent 协作模式）
  *
- * 职责：
- * - 三 Agent 协作：Planner（规划）→ Executor（执行）→ Reviewer（审校）
- * - 每一步由独立 LLM 调用完成，pipeline 化
+ * 改造后：Planner/Reviewer 用 generateText；Executor 用 streamText
+ * 保留：三段式骨架、SSE 事件协议、工具调用能力
  *
  * 与 SQL 网关的关系：
- * - Executor 通过 AgentTools 调网关（POST /api/sql/query）执行数据访问
+ * - Executor 通过 buildTools(db) 走 AgentTools（间接走网关）
  * - Planner/Reviewer 不直接连 DB
  */
 
-import axios from 'axios';
-import { AgentTools } from './tools.js';
+import { streamText, generateText, stepCountIs } from 'ai';
+import { createChatModel } from './llm.js';
+import { buildTools } from './tools.js';
 
 const PLANNER_PROMPT = `你是一个任务规划 Agent，负责将用户需求分解为可执行的步骤。
 
@@ -45,12 +45,12 @@ const PLANNER_PROMPT = `你是一个任务规划 Agent，负责将用户需求�
 const EXECUTOR_PROMPT = `你是一个执行 Agent，负责根据计划调用具体的工具。
 
 你将收到：
-1. 当前要执行的步骤
+1. 当前要执行的步骤（来自 Planner 的计划）
 2. 之前步骤的执行结果
 
 你的职责：
 1. 提取步骤中需要传递的参数
-2. 生成正确的工具调用参数
+2. 调用步骤中指定的工具（可以配合查询工具组合使用）
 3. 根据之前的执行结果调整下一步
 
 数据来源：
@@ -63,9 +63,7 @@ const EXECUTOR_PROMPT = `你是一个执行 Agent，负责根据计划调用具�
 - calculateStatistics: metric（sales_amount/quantity）和 operation（sum/avg/max/min/count）必填
 - generateChartConfig: type、title、labels、values 必填；多系列用二维数组
 
-输出格式：
-返回 JSON 格式的工具调用参数：
-{"tool": "工具名", "args": {"参数名": "参数值"}}`;
+完成后用文字总结这一步骤的产出。`;
 
 const REVIEWER_PROMPT = `你是一个审查 Agent，负责判断当前执行结果是否满足用户需求。
 
@@ -95,245 +93,212 @@ const REVIEWER_PROMPT = `你是一个审查 Agent，负责判断当前执行结�
 }`;
 
 class MultiAgent {
-  constructor(apiUrl, apiKey, model, db) {
-    this.apiUrl = apiUrl;
-    this.apiKey = apiKey;
-    this.model = model;
-    this.tools = new AgentTools(db);
-    this.maxSteps = 6;
-  }
-
-  async callLLM(messages, tools = null, temperature = 0.2) {
-    const requestData = {
-      model: this.model,
-      messages: messages,
-      temperature: temperature
-    };
-    if (tools) {
-      requestData.tools = tools;
-      requestData.tool_choice = 'auto';
+  /**
+   * @param {string|object} apiUrlOrEnv - 兼容老调用
+   * @param {string} [apiKey]
+   * @param {string} [model]
+   * @param {object} [db]
+   */
+  constructor(apiUrlOrEnv, apiKey, model, db) {
+    if (typeof apiUrlOrEnv === 'string') {
+      this.env = { apiUrl: apiUrlOrEnv, apiKey, model };
+      this.db = db;
+    } else {
+      this.env = apiUrlOrEnv;
+      this.db = apiKey;
     }
-    const response = await axios({
-      method: 'post',
-      url: this.apiUrl,
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`
-      },
-      data: requestData
-    });
-    return response.data.choices[0].message;
+
+    this.model = createChatModel(this.env);
+    this.tools = buildTools(this.db);
+    this.maxSteps = 6;
   }
 
   async *executeStream(userInput) {
     console.log('\n=== 多 Agent 协作开始 ===');
     console.log('用户需求:', userInput);
 
-    const toolsModule = await import('./tools.js');
-    const tools = Object.values(toolsModule.toolSchemas).map(schema => ({
-      type: 'function',
-      function: schema
-    }));
+    // ========== 1. Planner：生成执行计划 ==========
+    yield { event: 'agent', data: { type: 'planner', message: '开始规划任务...' } };
 
-    let executionHistory = [];
-    let chartConfig = null;
-    let finalResponse = '';
-
-    yield {
-      event: 'agent',
-      data: { type: 'planner', message: '开始规划任务...' }
-    };
-
-    let plan = null;
+    let plan;
     try {
-      const plannerMessages = [
-        { role: 'system', content: PLANNER_PROMPT },
-        { role: 'user', content: `用户需求：${userInput}` }
-      ];
-
-      const planResponse = await this.callLLM(plannerMessages);
-      console.log('Planner 响应:', planResponse.content);
-
+      const planRes = await generateText({
+        model: this.model,
+        system: PLANNER_PROMPT,
+        messages: [{ role: 'user', content: `用户需求：${userInput}` }],
+        temperature: 0.2,
+      });
+      console.log('Planner 输出:', planRes.text);
+      plan = parsePlanJSON(planRes.text);
       yield {
         event: 'agent',
-        data: { type: 'planner', message: '规划完成，开始执行...' }
+        data: { type: 'planner', message: `规划完成，共 ${plan.steps.length} 步` }
       };
-
-      plan = JSON.parse(planResponse.content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim());
     } catch (error) {
       console.error('Planner 错误:', error.message);
-      yield {
-        event: 'error',
-        data: { type: 'error', error: `规划失败: ${error.message}` }
-      };
+      yield { event: 'error', data: { type: 'error', error: `规划失败: ${error.message}` } };
       return;
     }
 
-    let currentStepIndex = 0;
-    let consecutiveNoProgress = 0;
+    // ========== 2. 循环：Executor + Reviewer ==========
+    const chartConfigHolder = { value: null };
+    const executionHistory = [];
 
-    while (currentStepIndex < this.maxSteps) {
-      console.log(`\n--- 第 ${currentStepIndex + 1} 步 ---`);
+    for (let stepIdx = 0; stepIdx < this.maxSteps; stepIdx++) {
+      console.log(`\n--- 第 ${stepIdx + 1} 步 ---`);
+      yield { event: 'step', data: { type: 'step_start', step: stepIdx + 1, message: `正在执行第 ${stepIdx + 1} 步...` } };
 
-      yield {
-        event: 'step',
-        data: { type: 'step_start', step: currentStepIndex + 1 }
-      };
+      // 当前 plan 步骤
+      const currentStep = plan.steps[stepIdx];
 
-      if (currentStepIndex < plan.steps.length) {
-        const step = plan.steps[currentStepIndex];
-        yield {
-          event: 'agent',
-          data: { type: 'executor', message: `执行: ${step.tool}` }
-        };
-
-        const executorMessages = [
-          { role: 'system', content: EXECUTOR_PROMPT },
-          { role: 'user', content: JSON.stringify({ step, history: executionHistory }) }
-        ];
-
-        try {
-          const executorResponse = await this.callLLM(executorMessages, tools);
-          const executorResult = JSON.parse(
-            executorResponse.content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
-          );
-
-          const toolName = executorResult.tool;
-          const args = executorResult.args;
-
-          console.log(`调用工具: ${toolName}`, args);
-
-          yield {
-            event: 'tool_call',
-            data: { type: 'tool_call', tool: toolName, args: args }
-          };
-
-          let result;
-          if (this.tools[toolName]) {
-            result = await this.tools[toolName](args);
-          } else {
-            result = { success: false, error: `未知工具: ${toolName}` };
-          }
-
-          console.log('工具返回:', JSON.stringify(result).substring(0, 200));
-
-          yield {
-            event: 'tool_result',
-            data: {
-              type: 'tool_result',
-              tool: toolName,
-              result: { success: result.success, summary: this.summarizeResult(result) }
-            }
-          };
-
-          if (result.config) {
-            chartConfig = result.config;
-          }
-
-          executionHistory.push({
-            step: currentStepIndex + 1,
-            tool: toolName,
-            args: args,
-            result: result
-          });
-
-          if (!result.success) {
-            consecutiveNoProgress++;
-          } else {
-            consecutiveNoProgress = 0;
-          }
-
-        } catch (error) {
-          console.error('Executor 错误:', error.message);
-          yield {
-            event: 'error',
-            data: { type: 'error', error: `执行失败: ${error.message}` }
-          };
-          currentStepIndex++;
-          continue;
-        }
+      // ----- Executor -----
+      if (currentStep) {
+        yield { event: 'agent', data: { type: 'executor', message: `执行: ${currentStep.tool}` } };
+        yield* this.runExecutorStep(userInput, currentStep, executionHistory, stepIdx + 1, chartConfigHolder);
       }
 
-      yield {
-        event: 'agent',
-        data: { type: 'reviewer', message: '审查结果...' }
-      };
+      // ----- Reviewer -----
+      yield { event: 'agent', data: { type: 'reviewer', message: '审查结果...' } };
 
+      let review;
       try {
-        const reviewMessages = [
-          { role: 'system', content: REVIEWER_PROMPT },
-          { role: 'user', content: JSON.stringify({ userInput, history: executionHistory, chartConfig }) }
-        ];
-
-        const reviewResponse = await this.callLLM(reviewMessages);
-        const review = JSON.parse(
-          reviewResponse.content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
-        );
-
+        const reviewRes = await generateText({
+          model: this.model,
+          system: REVIEWER_PROMPT,
+          messages: [{
+            role: 'user',
+            content: JSON.stringify({ userInput, history: executionHistory, chartConfig: chartConfigHolder.value }, null, 2)
+          }],
+          temperature: 0.2,
+        });
+        review = parsePlanJSON(reviewRes.text);
         console.log('Reviewer 审查:', review.status, review.reason);
-
-        yield {
-          event: 'agent',
-          data: { type: 'reviewer', message: review.reason }
-        };
-
-        if (review.status === 'complete') {
-          finalResponse = review.reason;
-          break;
-        } else if (review.status === 'failed') {
-          yield {
-            event: 'error',
-            data: { type: 'error', error: review.reason }
-          };
-          break;
-        } else if (review.issues && review.issues.length > 0) {
-          if (currentStepIndex >= plan.steps.length) {
-            plan.steps.push({ order: currentStepIndex + 1, tool: review.nextStep, reason: review.issues[0] });
-          }
-        }
-
+        yield { event: 'agent', data: { type: 'reviewer', message: review.reason } };
       } catch (error) {
         console.error('Reviewer 错误:', error.message);
+        continue;
       }
 
-      currentStepIndex++;
-
-      if (consecutiveNoProgress >= 3) {
-        console.log('\n=== 连续多次无进展，终止执行 ===');
-        break;
+      if (review.status === 'complete') {
+        yield {
+          event: 'complete',
+          data: {
+            type: 'final_response',
+            content: review.reason || '任务完成',
+            chartConfig: chartConfigHolder.value,
+          }
+        };
+        return;
       }
-    }
+      if (review.status === 'failed') {
+        yield { event: 'error', data: { type: 'error', error: review.reason } };
+        return;
+      }
 
-    if (currentStepIndex >= this.maxSteps) {
-      console.log('\n=== 达到最大执行步数 ===');
-      yield {
-        event: 'complete',
-        data: {
-          type: 'max_steps_reached',
-          content: '已达到最大执行步数',
-          chartConfig: chartConfig
-        }
-      };
-      return;
+      // 没步骤可执行但 Reviewer 还想继续 -> 终止避免死循环
+      if (!currentStep) break;
     }
 
     yield {
       event: 'complete',
       data: {
-        type: 'final_response',
-        content: finalResponse || '任务完成',
-        chartConfig: chartConfig
+        type: 'max_steps_reached',
+        content: '已达到最大执行步数',
+        chartConfig: chartConfigHolder.value,
       }
     };
   }
 
-  summarizeResult(result) {
-    if (!result.success) return '执行失败';
-    if (result.data && result.data.length > 0) return `获取到 ${result.count} 条数据`;
-    if (result.value !== undefined) return `计算结果: ${result.value}`;
-    if (result.config) return `生成 ${result.config.type} 图: ${result.config.title}`;
-    return '执行成功';
+  /**
+   * Executor 内部：跑一个 plan 步骤
+   * - yield 事件（tool_call/tool_result）给外层 executeStream
+   * - 直接 push 到 history，修改 chartConfigHolder.value
+   */
+  async *runExecutorStep(userInput, currentStep, executionHistory, stepNum, chartConfigHolder) {
+    const messages = [
+      { role: 'system', content: EXECUTOR_PROMPT },
+      {
+        role: 'user',
+        content: `用户需求：${userInput}\n\n当前要执行的步骤：${JSON.stringify(currentStep)}\n\n历史执行结果：${JSON.stringify(executionHistory)}`
+      },
+    ];
+
+    const result = streamText({
+      model: this.model,
+      messages,
+      tools: this.tools,
+      stopWhen: stepCountIs(3),
+      temperature: 0.2,
+    });
+
+    for await (const part of result.fullStream) {
+      switch (part.type) {
+        case 'start-step':
+        case 'step-start':
+          // 内部 step 不外流（外层已经在 yield step 1, step 2...）
+          break;
+        case 'text-delta':
+          // Executor 内部思考不外流（避免污染前端）
+          break;
+        case 'tool-call': {
+          // ai@4: part.args  ai@5: part.input
+          let args = part.input ?? (typeof part.args === 'string' ? safeJSON(part.args) : part.args);
+          if (args === undefined || args === null) args = {};
+          executionHistory.push({ step: stepNum, tool: part.toolName, args });
+          yield {
+            event: 'tool_call',
+            data: { type: 'tool_call', tool: part.toolName, args, step: stepNum }
+          };
+          break;
+        }
+        case 'tool-result': {
+          const r = part.result ?? part.output;
+          if (r && r.config) chartConfigHolder.value = r.config;
+          const last = executionHistory[executionHistory.length - 1];
+          if (last) last.result = { success: r?.success, count: r?.count, summary: summarizeResult(r) };
+          yield {
+            event: 'tool_result',
+            data: {
+              type: 'tool_result',
+              tool: part.toolName,
+              result: { success: r?.success, count: r?.count, summary: summarizeResult(r) },
+              step: stepNum,
+            }
+          };
+          break;
+        }
+        case 'error': {
+          console.error('Executor 错误:', part.error);
+          break;
+        }
+        default:
+          break;
+      }
+    }
   }
+
+  summarizeResult(result) {
+    return summarizeResult(result);
+  }
+}
+
+function safeJSON(s) {
+  try { return JSON.parse(s); } catch { return s; }
+}
+
+function parsePlanJSON(text) {
+  if (!text) throw new Error('空响应');
+  const cleaned = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+  return JSON.parse(cleaned);
+}
+
+function summarizeResult(result) {
+  if (!result) return '无结果';
+  if (!result.success) return '执行失败';
+  if (result.config) return `生成 ${result.config.type} 图: ${result.config.title}`;
+  if (result.data && result.data.length > 0) return `获取到 ${result.count} 条数据`;
+  if (result.value !== undefined) return `计算结果: ${result.value}`;
+  return '执行成功';
 }
 
 export { MultiAgent, PLANNER_PROMPT, EXECUTOR_PROMPT, REVIEWER_PROMPT };
