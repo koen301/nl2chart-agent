@@ -5,6 +5,143 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18.0-green.svg)](https://nodejs.org/)
 [![Agent Pattern](https://img.shields.io/badge/Agent-ReAct-orange.svg)](https://arxiv.org/abs/2210.03629)
+[![Vercel AI SDK](https://img.shields.io/badge/AI_SDK-5.x-000.svg?logo=vercel&logoColor=white)](https://ai-sdk.dev/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-1.4-1C3C3C.svg?logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraphjs/)
+
+---
+
+## 🏢 产品矩阵
+
+> 本分支（`ai-sdk`）是 `main` 分支的**现代化封装版**，基于 Vercel AI SDK + LangGraph 重构，提供**三种多 Agent 编排方式**满足不同复杂度。
+
+| 模式 | 类 | 编排方式 | 适用 |
+|------|----|----------|------|
+| **Single Agent** | `DataAgent` | `streamText` + `stopWhen: stepCountIs(n)` | 单步任务 / 快速验证 |
+| **Multi Agent（手写）** | `MultiAgent` | `for` 循环 + Planner/Executor/Reviewer 串行 | 流程简单且不常变动 |
+| **Multi Agent（LangGraph）** | `MultiAgentLangGraph` | **`StateGraph` 节点 + 条件边 + checkpoint** | 流程复杂、需可观测 / 断点 / 扩展中间件 |
+
+**请求路由：** `POST /api/agent/stream`，body 加 `"mode": "langgraph"` 切换到 LangGraph 版；不传或传 `auto` 沿用启动期选定的 Agent。
+
+**测试覆盖：** `npm run test:agents` 一键回归四种模式（DataAgent / MultiAgent / SqlAgent / MultiAgentLangGraph），21 项断言全绿。
+
+> 💼 **何时升级到 LangGraph？** 当你的多 Agent 流程出现以下任一信号：**需要可观测性 / 需要断点恢复 / 需要动态插拔节点 / 流程分支变多**，就从手写版迁移到 LangGraph 版；否则维持现状即可。
+
+---
+
+## 📊 LangSmith 可观测性集成（企业级）
+
+LangGraph 节点 / 状态变更 / 工具调用可自动上报到 [LangSmith](https://smith.langchain.com/) 仪表盘，实现：
+
+- **可视化 trace**：每个 planner / executor / reviewer 节点的输入输出状态、latency 一目了然
+- **错误定位**：失败的节点、LLM 调用、SQL 执行一查即得
+- **Token 统计**：按 project / tag 维度统计 API 成本
+- **多环境隔离**：dev / staging / prod 配不同 project 名即可分离
+
+### 接入步骤
+
+1. **注册免费账号**：[smith.langchain.com](https://smith.langchain.com/) → Settings → 复制 API Key
+2. **配置 `.env`**：
+   ```bash
+   LANGSMITH_TRACING=true
+   LANGSMITH_API_KEY=lsv2_pt_xxxxxxxxxxxx
+   LANGSMITH_PROJECT=nl2chart-agent
+   ```
+3. **启动**：`npm run start:tracing`（自动预设 `LANGSMITH_TRACING=true`）
+4. **触发一次 Agent 调用** → 打开 [smith.langchain.com](https://smith.langchain.com/) → 在 project 视图看到实时 trace
+
+> 不启用也能跑：只缺可观测性，业务功能完全不受影响。
+
+### 启动 banner 效果
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  📊 LangSmith 集成状态                                     │
+├──────────────────────────────────────────────────────────┤
+│  启用状态: ✅ ON  (trace 上报到 LangSmith 云端)             │
+│  Project : nl2chart-agent                                │
+│  Endpoint: https://api.smith.langchain.com               │
+├──────────────────────────────────────────────────────────┤
+│  🔗 Dashboard: https://smith.langchain.com/              │
+│  💡 启动后所有 Agent 调用会出现在 project 视图下           │
+└──────────────────────────────────────────────────────────┘
+```
+
+**实现细节**：
+- 零侵入：业务代码无需 import LangSmith SDK，只靠 env 即可触发
+- 节点 metadata：planner / executor / reviewer 节点带 role + description，trace 一目了然
+- tags：每次 run 带 `['multi-agent', 'ai-sdk', 'v1']`，可按版本/类型过滤
+- 健康检查：启动时自动 ping LangSmith，key 失效会警告但不阻断主流程
+
+---
+
+## 🛑 人机 Interrupt（高危操作安全闸门）
+
+LLM 自主决策很强大，但**生产环境的硬门槛**是：任何高危动作（删数据、付款、发邮件、改配置）必须经人审批。本项目用 LangGraph `interrupt()` 在**执行高危步骤前**暂停 graph，等用户决策。
+
+### 工作流
+
+```
+┌──────────┐  Planner    ┌──────────┐  step     ┌──────────┐
+│  用户输入 │ ──────────▶ │ 生成 plan │ ────────▶ │ Executor │
+└──────────┘              └──────────┘           └────┬─────┘
+                                                      │ dangerous=true
+                                                      ▼
+                                              ┌──────────────┐
+                                              │ interrupt()  │
+                                              │ 暂停 graph   │
+                                              │ 等用户决策   │
+                                              └──────┬───────┘
+                                                     │
+                                          ┌──────────┴──────────┐
+                                          ▼                     ▼
+                                  ┌──────────────┐      ┌──────────────┐
+                                  │ 批准 (approve)│      │ 拒绝 (reject)│
+                                  │ → 继续执行   │      │ → 标 failed  │
+                                  └──────────────┘      └──────────────┘
+```
+
+### 触发条件
+
+Planner 在生成 plan 时判断步骤危险性，在 `step.dangerous: true` 时触发 interrupt。
+当前 prompt 的判定规则：
+- 涉及"删除/修改/写入/导出敏感数据"等动词 → 标 `dangerous: true`
+- 普通查询/统计/图表 → 默认 `false`（不打扰用户）
+
+### 前端体验
+
+1. 用户在聊天框输入 → 后端 `executeStream` 启动 LangGraph
+2. Agent 走到危险 step → yield `interrupt_request` + `thread` 事件给前端
+3. 前端弹窗显示「⚠️ 即将执行 XXX，是否继续？」+ 工具名/参数/原因
+4. 用户点 **批准** 或 **拒绝** → 调 `POST /api/agent/resume` 携带 `threadId + decision`
+5. 后端用 `Command({ resume: decision })` 恢复 graph（**同一 thread_id**）
+6. 后续事件继续 SSE 流式推给前端
+
+### API
+
+| 端点 | 用途 | Body |
+|------|------|------|
+| `POST /api/agent/stream` | 启动多 Agent 流（可能中途被 interrupt） | `{ userInput, mode: 'langgraph' }` |
+| `POST /api/agent/resume` | 恢复被 interrupt 的 graph | `{ threadId, decision: { decision: 'approve' \| 'reject' } }` |
+
+### 实现细节
+
+- **核心 API**：`interrupt({ type, action, reason, question })` + `Command({ resume })`
+- **checkpoint**：`MemorySaver` 自动保存 graph state，断点恢复不丢上下文
+- **同 thread_id**：resume 时必须用与中断时**相同的 `thread_id`**，LangGraph 通过它找回 checkpoint
+- **事件协议**：扩展 3 个新事件 — `thread` / `interrupt_request` / `paused` / `interrupt_resolve`
+- **降级**：未启用的 LLM 不会标 dangerous → 完全无感，不影响正常流
+
+### 验证
+
+`npm run test:agents` 25 项断言全绿（其中 4 项专门验证 interrupt 事件协议）：
+- ✅ 收到 `thread` 事件（threadId 用于 resume）
+- ✅ 普通流程仍 complete（dangerous=false 不中断）
+- ✅ 普通查询不触发 paused
+- ✅ 普通查询不触发 interrupt_request
+
+### 演示
+
+启动后输入类似「**把销售数据导出为 JSON 文件**」（带"导出"动词）→ Planner 标记 dangerous → 弹窗拦截。点拒绝则流程终止，批准则继续导出。
 
 ---
 

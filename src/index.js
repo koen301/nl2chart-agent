@@ -9,6 +9,7 @@ import xlsx from 'xlsx';
 import { parse } from 'csv-parse/sync';
 import { initDB } from './db/index.js';
 import { DataAgent, MultiAgent, SqlAgent } from './agent/index.js';
+import { printBanner, healthCheck, isLangSmithEnabled } from './agent/tracing.js';
 
 const USE_MULTI_AGENT = process.env.USE_MULTI_AGENT === 'true';
 const USE_SQL_AGENT = process.env.USE_SQL_AGENT === 'true';
@@ -29,6 +30,17 @@ let db;
 let agent;
 
 async function startServer() {
+  // 启动 banner：先打印 LangSmith 状态
+  printBanner();
+  if (isLangSmithEnabled()) {
+    const hc = await healthCheck();
+    if (hc.ok) {
+      console.log(`✅ LangSmith 连接成功 (project sample: ${hc.sample})`);
+    } else {
+      console.log(`⚠️  LangSmith 连接失败: ${hc.reason}（不影响主流程，仅 trace 失效）`);
+    }
+  }
+
   db = await initDB();
   if (USE_SQL_AGENT) {
     agent = new SqlAgent(API_URL, API_KEY, LLM_MODEL, db);
@@ -48,9 +60,20 @@ async function startServer() {
 }
 
 app.post('/api/agent/stream', async (req, res) => {
-  const { userInput } = req.body;
+  const { userInput, mode } = req.body;
   if (!userInput) {
     return res.status(400).json({ error: '缺少 userInput' });
+  }
+
+  // mode=langgraph 时切换到 LangGraph 版多 Agent
+  // 其他情况沿用启动期选定的 agent
+  let activeAgent = agent;
+  if (mode === 'langgraph') {
+    const { MultiAgentLangGraph } = await import('./agent/multi-agent-langgraph.js');
+    activeAgent = new MultiAgentLangGraph(
+      { apiUrl: API_URL, apiKey: API_KEY, model: LLM_MODEL },
+      db
+    );
   }
 
   res.setHeader('Content-Type', 'text/event-stream');
@@ -59,7 +82,7 @@ app.post('/api/agent/stream', async (req, res) => {
   res.flushHeaders();
 
   try {
-    for await (const chunk of agent.executeStream(userInput)) {
+    for await (const chunk of activeAgent.executeStream(userInput)) {
       const eventData = `event: ${chunk.event}\ndata: ${JSON.stringify(chunk.data)}\n\n`;
       res.write(eventData);
     }
@@ -68,6 +91,44 @@ app.post('/api/agent/stream', async (req, res) => {
     res.end();
   } catch (error) {
     console.error('Agent 流式执行失败:', error.message);
+    const errorData = `event: error\ndata: ${JSON.stringify({ error: error.message })}\n\n`;
+    res.write(errorData);
+    res.end();
+  }
+});
+
+/**
+ * 恢复被打断的 LangGraph（人机 interrupt）
+ * body: { threadId, decision: { decision: 'approve' | 'reject' } }
+ * 返回 SSE 流，复用现有事件协议
+ */
+app.post('/api/agent/resume', async (req, res) => {
+  const { threadId, decision } = req.body;
+  if (!threadId || !decision) {
+    return res.status(400).json({ error: '缺少 threadId 或 decision' });
+  }
+
+  // 始终用 LangGraph 版 Agent 来 resume（其他模式不支持 interrupt）
+  const { MultiAgentLangGraph } = await import('./agent/multi-agent-langgraph.js');
+  const lgAgent = new MultiAgentLangGraph(
+    { apiUrl: API_URL, apiKey: API_KEY, model: LLM_MODEL },
+    db
+  );
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  try {
+    for await (const chunk of lgAgent.resumeStream(threadId, decision)) {
+      const eventData = `event: ${chunk.event}\ndata: ${JSON.stringify(chunk.data)}\n\n`;
+      res.write(eventData);
+    }
+    res.write('event: end\ndata: {"type": "end"}\n\n');
+    res.end();
+  } catch (error) {
+    console.error('Agent resume 失败:', error.message);
     const errorData = `event: error\ndata: ${JSON.stringify({ error: error.message })}\n\n`;
     res.write(errorData);
     res.end();

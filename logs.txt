@@ -1,0 +1,16 @@
+
+┌──────────────────────────────────────────────────────────┐
+│  📊 LangSmith 集成状态                                  │
+├──────────────────────────────────────────────────────────┤
+│  启用状态: ❌ OFF  (本地模式，无 trace 上报)                  │
+│  Project : default                                         │
+│  Endpoint: https://api.smith.langchain.com                 │
+├──────────────────────────────────────────────────────────┤
+│  💡 注册免费账号: https://smith.langchain.com/             │
+│     然后在 .env 配 LANGSMITH_TRACING=true + API_KEY        │
+└──────────────────────────────────────────────────────────┘
+
+使用 JSON File 数据库
+使用单 Agent 架构
+后端服务运行在 http://localhost:3000
+Agent 流式接口: http://localhost:3000/api/agent/stream

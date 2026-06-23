@@ -36,10 +36,15 @@ const PLANNER_PROMPT = `你是一个任务规划 Agent，负责将用户需求�
 必须返回以下 JSON 格式的执行计划，不要添加任何其他内容：
 {
   "steps": [
-    {"order": 1, "tool": "工具名", "reason": "为什么调用这个工具"},
-    {"order": 2, "tool": "工具名", "reason": "为什么调用这个工具"}
+    {"order": 1, "tool": "工具名", "reason": "为什么调用这个工具", "dangerous": false}
   ],
   "finalAction": "最终应该生成什么（图表类型/数据导出/文字总结）"
+}
+
+dangerous 标记规则：
+- 大多数查询/统计/图表步骤 dangerous = false（默认）
+- 当用户请求中包含"删除/修改/写入/导出敏感数据"等动作时，相应步骤必须标 dangerous = true
+- 不确定时标 false（不打扰用户）
 }`;
 
 const EXECUTOR_PROMPT = `你是一个执行 Agent，负责根据计划调用具体的工具。
@@ -301,4 +306,4 @@ function summarizeResult(result) {
   return '执行成功';
 }
 
-export { MultiAgent, PLANNER_PROMPT, EXECUTOR_PROMPT, REVIEWER_PROMPT };
+export { MultiAgent, PLANNER_PROMPT, EXECUTOR_PROMPT, REVIEWER_PROMPT, parsePlanJSON };

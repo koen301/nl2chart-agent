@@ -4,6 +4,7 @@
 import 'dotenv/config';
 import { initDB } from './src/db/index.js';
 import { DataAgent, MultiAgent, SqlAgent } from './src/agent/index.js';
+import { MultiAgentLangGraph } from './src/agent/multi-agent-langgraph.js';
 
 const env = {
   apiUrl: process.env.API_URL,
@@ -87,8 +88,52 @@ async function main() {
     { requireChart: false, requireMessage: true }
   );
 
+  // MultiAgentLangGraph: LangGraph 1.x 状态机驱动版（Planner/Executor/Reviewer）
+  // 验证 StateGraph 编排 + 条件边 + checkpoint 行为
+  await runAgent(
+    'MultiAgentLangGraph',
+    new MultiAgentLangGraph(env, db),
+    '用柱状图展示各产品销量',
+    { requireChart: true, requireMessage: false }
+  );
+
+  // Interrupt 流程：验证 thread/paused/interrupt 事件协议
+  await runInterruptScenario();
+
   console.log(`\n=== TOTAL: pass=${pass} fail=${fail} ===`);
   process.exit(fail > 0 ? 1 : 0);
 }
 
 main().catch(e => { console.error(e); process.exit(1); });
+
+/**
+ * Interrupt 流程测试：验证 thread/paused/interrupt 事件协议
+ * 用普通查询（Planner 不会标 dangerous），确保新事件不破坏正常流
+ */
+async function runInterruptScenario() {
+  console.log('\n=== Interrupt 流程: 普通查询不应触发 paused/interrupt ===');
+  const db = await initDB();
+  const agent = new MultiAgentLangGraph(env, db);
+
+  const userInput = '用柱状图展示各产品销量';
+  const events = [];
+  let threadId = null;
+  let hasPaused = false;
+  let hasInterrupt = false;
+
+  try {
+    for await (const ev of agent.executeStream(userInput)) {
+      events.push(ev.event);
+      if (ev.event === 'thread') threadId = ev.data.threadId;
+      if (ev.event === 'paused') hasPaused = true;
+      if (ev.event === 'interrupt_request') hasInterrupt = true;
+    }
+    assert(threadId, `[Interrupt] 收到 threadId 事件: ${threadId}`);
+    assert(events.includes('complete'), `[Interrupt] 普通流程仍然 complete (事件序列: ${events.length})`);
+    assert(!hasPaused, `[Interrupt] 普通查询不会触发 paused`);
+    assert(!hasInterrupt, `[Interrupt] 普通查询不会触发 interrupt_request`);
+  } catch (e) {
+    fail++;
+    console.log('  ❌ 异常:', e.message);
+  }
+}

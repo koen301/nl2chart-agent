@@ -375,7 +375,90 @@
       color: #dc3545;
       font-weight: bold;
     }
-    
+
+    /* Interrupt 弹窗（人机 interrupt） */
+    .interrupt-modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.55);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      animation: fadeIn 0.2s ease;
+    }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    .interrupt-content {
+      background: #fff;
+      border-radius: 12px;
+      width: 520px;
+      max-width: 92vw;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+      overflow: hidden;
+      animation: slideUp 0.25s ease;
+    }
+    @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    .interrupt-header {
+      background: linear-gradient(135deg, #ff6b6b, #ee5a52);
+      color: #fff;
+      padding: 16px 20px;
+      font-size: 16px;
+      font-weight: bold;
+    }
+    .interrupt-body {
+      padding: 20px;
+    }
+    .interrupt-body p { margin: 10px 0; }
+    .interrupt-body p.meta { color: #555; font-size: 13px; }
+    .interrupt-body p.warning {
+      margin-top: 16px;
+      padding: 10px 12px;
+      background: #fff3cd;
+      border-left: 3px solid #ffc107;
+      font-size: 13px;
+      color: #856404;
+    }
+    .interrupt-body code {
+      background: #f1f3f5;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 12px;
+    }
+    .interrupt-actions {
+      display: flex;
+      gap: 12px;
+      padding: 0 20px 20px;
+    }
+    .interrupt-actions button {
+      flex: 1;
+      padding: 12px;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn-approve {
+      background: #28a745;
+      color: #fff;
+    }
+    .btn-approve:hover { background: #218838; }
+    .btn-reject {
+      background: #dc3545;
+      color: #fff;
+    }
+    .btn-reject:hover { background: #c82333; }
+    .interrupt-resolve {
+      display: inline-block;
+      padding: 6px 12px;
+      margin: 4px 0;
+      background: #d1ecf1;
+      color: #0c5460;
+      border-radius: 4px;
+      font-size: 13px;
+    }
+
     /* 响应式 */
     @media (max-width: 1024px) {
       .main-grid {
@@ -475,6 +558,7 @@
   
   <script>
     let chart = null;
+    let currentThreadId = null;  // 当前会话的 LangGraph threadId（resume 用）
     
     // 初始化
     async function init() {
@@ -610,7 +694,10 @@
       
       addMessage('user', userInput);
       input.value = '';
-      
+
+      // 重置当前 threadId（每次新会话都新建一个）
+      currentThreadId = null;
+
       const agentMessageDiv = document.createElement('div');
       agentMessageDiv.className = 'message agent';
       agentMessageDiv.innerHTML = '<strong>Agent:</strong> <div class="stream-content"></div>';
@@ -714,6 +801,25 @@
                      streamContent.innerHTML += `<div class="tool-result">✅ ${eventData.result.summary}</div>`;
                      scrollToBottom();
                    }
+                   else if (currentEvent === 'thread') {
+                     // 后端告知当前会话的 threadId，存下来供 resume 用
+                     currentThreadId = eventData.threadId;
+                   }
+                   else if (currentEvent === 'interrupt_request') {
+                     // 高危操作拦截：弹窗让用户决策
+                     showInterruptDialog(eventData, currentThreadId);
+                   }
+                   else if (currentEvent === 'paused') {
+                     // graph 暂停，等待用户决策
+                     if (eventData.interrupts && eventData.interrupts.length > 0) {
+                       const p = eventData.interrupts[0].payload || {};
+                       showInterruptDialog(p, eventData.threadId);
+                     }
+                   }
+                   else if (currentEvent === 'interrupt_resolve') {
+                     streamContent.innerHTML += `<div class="interrupt-resolve">🔓 用户决策: <b>${eventData.decision}</b></div>`;
+                     scrollToBottom();
+                   }
                    else if (currentEvent === 'complete') {
                      const stepElements = streamContent.querySelectorAll('.step-indicator');
                      stepElements.forEach(el => {
@@ -752,6 +858,101 @@
         
       } catch (error) {
         streamContent.innerHTML = `<div class="error">❌ 请求失败: ${error.message}</div>`;
+        input.disabled = false;
+        sendBtn.disabled = false;
+        input.focus();
+      }
+    }
+
+    /**
+     * 人机 interrupt 弹窗
+     * 高危操作拦截：让用户选择"批准"或"拒绝"
+     */
+    function showInterruptDialog(payload, threadId) {
+      // 移除已存在的弹窗
+      const existing = document.getElementById('interrupt-modal');
+      if (existing) existing.remove();
+
+      const modal = document.createElement('div');
+      modal.id = 'interrupt-modal';
+      modal.className = 'interrupt-modal';
+      modal.innerHTML = `
+        <div class="interrupt-content">
+          <div class="interrupt-header">⚠️  高危操作拦截</div>
+          <div class="interrupt-body">
+            <p><b>${payload.question || '需要用户确认'}</b></p>
+            <p class="meta">📋 工具: <code>${payload.action || '?'}</code></p>
+            <p class="meta">📝 原因: ${payload.reason || '（无）'}</p>
+            ${payload.args ? `<p class="meta">⚙️ 参数: <code>${JSON.stringify(payload.args).substring(0, 200)}</code></p>` : ''}
+            <p class="warning">Agent 正在等待你的决策——这正是生产环境上线前的"安全闸门"。</p>
+          </div>
+          <div class="interrupt-actions">
+            <button class="btn-reject" data-decision="reject">❌ 拒绝</button>
+            <button class="btn-approve" data-decision="approve">✅ 批准</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+
+      const onClick = async (e) => {
+        const decision = e.target.getAttribute('data-decision');
+        if (!decision) return;
+        modal.remove();
+        await resumeGraph(threadId, { decision });
+      };
+      modal.querySelector('.btn-reject').addEventListener('click', onClick);
+      modal.querySelector('.btn-approve').addEventListener('click', onClick);
+    }
+
+    /**
+     * 调 /api/agent/resume 恢复 graph
+     * 与原 stream 同样的 SSE 事件协议
+     */
+    async function resumeGraph(threadId, decision) {
+      if (!threadId) {
+        console.error('resume 失败：缺少 threadId');
+        return;
+      }
+      const input = document.getElementById('user-input');
+      const sendBtn = document.getElementById('send-btn');
+      input.disabled = true;
+      sendBtn.disabled = true;
+
+      try {
+        const response = await fetch('/api/agent/resume', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ threadId, decision })
+        });
+        if (!response.ok) throw new Error(`服务器错误: ${response.status}`);
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop();
+          for (const line of lines) {
+            if (line.startsWith('data:')) {
+              try {
+                const data = JSON.parse(line.substring(5).trim());
+                if (data.interrupts && data.interrupts.length > 0) {
+                  // resume 后又触发新 interrupt
+                  showInterruptDialog(data.interrupts[0].payload, data.threadId);
+                }
+                if (data.chartConfig) renderChart(data.chartConfig);
+                if (data.content) console.log('[resume] final:', data.content);
+              } catch {}
+            }
+          }
+        }
+      } catch (err) {
+        console.error('resume 失败:', err);
+        alert('恢复流程失败: ' + err.message);
+      } finally {
         input.disabled = false;
         sendBtn.disabled = false;
         input.focus();
